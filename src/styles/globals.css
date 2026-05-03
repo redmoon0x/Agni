@@ -136,6 +136,23 @@
     }
 }
 
+/* Custom window chrome (Linux/Windows): the OS gives us a transparent
+ * borderless window, and we paint the rounded corners + border + shadow
+ * ourselves so the app doesn't look naked on GNOME/KDE/Hyprland. */
+html[data-chrome="borderless"],
+html[data-chrome="borderless"] body {
+  background: transparent !important;
+}
+html[data-chrome="borderless"] #root,
+html[data-chrome="borderless"] #settings-root {
+  height: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.45);
+  background: var(--background);
+}
+
 /*
  * xterm.js overrides — kept outside @layer so they win against the addon's
  * own stylesheet (which is not in any layer and would otherwise override).

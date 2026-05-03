@@ -32,10 +32,10 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
 
-    // On Linux/Windows we render our own titlebar and window controls,
-    // so drop the native chrome entirely.
-    #[cfg(not(target_os = "macos"))]
-    let builder = builder.decorations(false);
+    // On Linux we render our own titlebar + rounded shell, so drop the
+    // native chrome and make the window transparent.
+    #[cfg(target_os = "linux")]
+    let builder = builder.decorations(false).transparent(true);
 
     builder.build().map_err(|e| e.to_string())?;
     Ok(())
@@ -60,19 +60,7 @@ async fn keyring_get_all(service: String, accounts: Vec<String>) -> Vec<Option<S
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
-
-    #[cfg(not(target_os = "macos"))]
-    let builder = builder.setup(|app| {
-        // Main window is built from tauri.conf.json with default chrome.
-        // On Linux/Windows we render our own titlebar — strip the native one.
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.set_decorations(false);
-        }
-        Ok(())
-    });
-
-    builder
+    tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::new().build())
