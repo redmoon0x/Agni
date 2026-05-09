@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -105,9 +105,7 @@ pub fn spawn(command: String, cwd: Option<String>) -> Result<Arc<BackgroundProc>
         }
     }
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let mut cmd = Command::new(&shell);
-    cmd.arg("-lc").arg(&trimmed);
+    let mut cmd = super::build_oneshot_command(&trimmed);
     if let Some(ref dir) = cwd {
         cmd.current_dir(dir);
     }
