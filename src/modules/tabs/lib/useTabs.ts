@@ -26,6 +26,7 @@ export type TerminalTab = {
 
   /** User-set label that overrides the cwd-derived name. Survives cd. */
   customTitle?: string;
+  private?: boolean;
 };
 
 export type EditorTab = {
@@ -153,6 +154,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
+        private: true,
       },
     ]);
     setActiveId(tabId);

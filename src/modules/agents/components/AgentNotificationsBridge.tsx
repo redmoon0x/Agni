@@ -11,12 +11,14 @@ import { useManagedAgentsStore } from "../store/managedAgentsStore";
 
 type Activate = (tabId: number, leafId: number) => void;
 type OnAgentStarted = (tabId: number, leafId: number, agent: string) => void;
+type OnAgentDone = (tabId: number) => void;
 type Ctx = {
   tabs: Tab[];
   activeId: number;
   focused: boolean;
   onActivate: Activate;
   onAgentStarted: OnAgentStarted;
+  onAgentDone: OnAgentDone;
 };
 
 function tabInfo(
@@ -97,8 +99,6 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
   }
 }
 
-type OnAgentDone = (tabId: number) => void;
-
 export function AgentNotificationsBridge({
   tabs,
   activeId,
@@ -113,8 +113,22 @@ export function AgentNotificationsBridge({
   onAgentDone: OnAgentDone;
 }) {
   const focused = useWindowFocus();
-  const ctxRef = useRef<Ctx>({ tabs, activeId, focused, onActivate, onAgentStarted });
-  ctxRef.current = { tabs, activeId, focused, onActivate, onAgentStarted };
+  const ctxRef = useRef<Ctx>({
+    tabs,
+    activeId,
+    focused,
+    onActivate,
+    onAgentStarted,
+    onAgentDone,
+  });
+  ctxRef.current = {
+    tabs,
+    activeId,
+    focused,
+    onActivate,
+    onAgentStarted,
+    onAgentDone,
+  };
 
   useEffect(() => {
     let alive = true;
