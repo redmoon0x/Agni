@@ -46,7 +46,6 @@ type Props = {
   onPathRenamed?: (from: string, to: string) => void;
   onPathDeleted?: (path: string) => void;
   onRevealInTerminal?: (path: string) => void;
-  onAttachToAgent?: (path: string) => void;
   onOpenMarkdownPreview?: (path: string) => void;
 };
 
@@ -154,7 +153,6 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
       onPathRenamed,
       onPathDeleted,
       onRevealInTerminal,
-      onAttachToAgent,
       onOpenMarkdownPreview,
     },
     ref,
@@ -359,7 +357,6 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
               onOpenFile={onOpenFile}
               onSelectPath={setSelectedPath}
               onRevealInTerminal={onRevealInTerminal}
-              onAttachToAgent={onAttachToAgent}
               onOpenMarkdownPreview={onOpenMarkdownPreview}
             />
           );
@@ -450,7 +447,6 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
           onRequestClose={() => setIsSearchOpen(false)}
           onActiveChange={setIsSearchActive}
           onRevealInTerminal={onRevealInTerminal}
-          onAttachToAgent={onAttachToAgent}
         />
 
         {!isSearchActive ? (

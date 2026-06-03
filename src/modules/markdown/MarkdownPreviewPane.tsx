@@ -1,9 +1,9 @@
-import { MarkdownCode } from "@/components/ai-elements/markdown-code";
 import { cn } from "@/lib/utils";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Streamdown } from "streamdown";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 
 type ReadResult =
   | { kind: "text"; content: string; size: number }
@@ -22,7 +22,18 @@ type Props = {
   visible: boolean;
 };
 
-const components = { code: MarkdownCode };
+function InlineCode({ className, children, ...rest }: { className?: string; children?: ReactNode }) {
+  return (
+    <code
+      className="rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+      {...rest}
+    >
+      {children}
+    </code>
+  );
+}
+
+const components = { code: InlineCode, pre: MarkdownCodeBlock };
 
 export function MarkdownPreviewPane({ path, visible }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
@@ -30,10 +41,7 @@ export function MarkdownPreviewPane({ path, visible }: Props) {
   useEffect(() => {
     let cancelled = false;
     setStatus({ kind: "loading" });
-    invoke<ReadResult>("fs_read_file", {
-      path,
-      workspace: currentWorkspaceEnv(),
-    })
+    invoke<ReadResult>("fs_read_file", { path, workspace: currentWorkspaceEnv() })
       .then((res) => {
         if (cancelled) return;
         if (res.kind === "text") {
@@ -41,19 +49,13 @@ export function MarkdownPreviewPane({ path, visible }: Props) {
         } else if (res.kind === "binary") {
           setStatus({ kind: "binary" });
         } else {
-          setStatus({
-            kind: "toolarge",
-            size: res.size,
-            limit: res.limit,
-          });
+          setStatus({ kind: "toolarge", size: res.size, limit: res.limit });
         }
       })
       .catch((e) => {
         if (!cancelled) setStatus({ kind: "error", message: String(e) });
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [path]);
 
   return (
@@ -65,22 +67,16 @@ export function MarkdownPreviewPane({ path, visible }: Props) {
     >
       <div className="flex-1 overflow-auto px-6 py-4">
         {status.kind === "loading" && (
-          <p className="text-[12px] text-muted-foreground">Loading…</p>
+          <p className="text-[12px] text-muted-foreground">Loading...</p>
         )}
         {status.kind === "error" && (
-          <p className="text-[12px] text-destructive">
-            Failed to read file: {status.message}
-          </p>
+          <p className="text-[12px] text-destructive">Failed to read file: {status.message}</p>
         )}
         {status.kind === "binary" && (
-          <p className="text-[12px] text-muted-foreground">
-            Binary file — cannot render as markdown.
-          </p>
+          <p className="text-[12px] text-muted-foreground">Binary file -- cannot render as markdown.</p>
         )}
         {status.kind === "toolarge" && (
-          <p className="text-[12px] text-muted-foreground">
-            File is {status.size} bytes; limit {status.limit}.
-          </p>
+          <p className="text-[12px] text-muted-foreground">File is {status.size} bytes; limit {status.limit}.</p>
         )}
         {status.kind === "ready" && (
           <Streamdown

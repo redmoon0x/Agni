@@ -10,11 +10,13 @@ import { useAgentStore } from "../store/agentStore";
 import { useManagedAgentsStore } from "../store/managedAgentsStore";
 
 type Activate = (tabId: number, leafId: number) => void;
+type OnAgentStarted = (tabId: number, leafId: number, agent: string) => void;
 type Ctx = {
   tabs: Tab[];
   activeId: number;
   focused: boolean;
   onActivate: Activate;
+  onAgentStarted: OnAgentStarted;
 };
 
 function tabInfo(
@@ -66,6 +68,7 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       const info = tabInfo(ctx.tabs, leafId);
       if (!info) return;
       store.start(leafId, info.tabId, sig.agent ?? "agent");
+      ctx.onAgentStarted(info.tabId, leafId, sig.agent ?? "agent");
       return;
     }
     case "working":
@@ -84,30 +87,39 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       maybeTriggerManagedReview(leafId);
       return;
     }
-    case "exited":
+    case "exited": {
+      const tabId = store.sessions[leafId]?.tabId ?? 0;
       store.finish(leafId);
       useManagedAgentsStore.getState().remove(leafId);
+      if (tabId) ctx.onAgentDone(tabId);
       return;
+    }
   }
 }
+
+type OnAgentDone = (tabId: number) => void;
 
 export function AgentNotificationsBridge({
   tabs,
   activeId,
   onActivate,
+  onAgentStarted,
+  onAgentDone,
 }: {
   tabs: Tab[];
   activeId: number;
   onActivate: Activate;
+  onAgentStarted: OnAgentStarted;
+  onAgentDone: OnAgentDone;
 }) {
   const focused = useWindowFocus();
-  const ctxRef = useRef<Ctx>({ tabs, activeId, focused, onActivate });
-  ctxRef.current = { tabs, activeId, focused, onActivate };
+  const ctxRef = useRef<Ctx>({ tabs, activeId, focused, onActivate, onAgentStarted });
+  ctxRef.current = { tabs, activeId, focused, onActivate, onAgentStarted };
 
   useEffect(() => {
     let alive = true;
     let unlisten: (() => void) | undefined;
-    listen<AgentSignal>("terax:agent-signal", (e) =>
+    listen<AgentSignal>("agni:agent-signal", (e) =>
       handleSignal(e.payload, ctxRef.current),
     )
       .then((u) => {

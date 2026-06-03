@@ -17,6 +17,7 @@ import type { Tab } from "@/modules/tabs";
 import { TabBar } from "@/modules/tabs";
 import { NotificationBell } from "@/modules/agents";
 import {
+  Folder01Icon,
   GridViewIcon,
   LayoutTwoColumnIcon,
   LayoutTwoRowIcon,
@@ -50,7 +51,7 @@ type Props = {
   /** Active tab is a terminal and below the per-tab pane cap. */
   canSplit: boolean;
   onActivateAgent: (tabId: number, leafId: number) => void;
-  onActivateLocalAgent: () => void;
+  onOpenFolder: () => void;
   onOpenSettings: () => void;
   searchTarget: SearchTarget;
   searchRef: RefObject<SearchInlineHandle | null>;
@@ -74,7 +75,7 @@ export function Header({
   onSplit,
   canSplit,
   onActivateAgent,
-  onActivateLocalAgent,
+  onOpenFolder,
   onOpenSettings,
   searchTarget,
   searchRef,
@@ -136,6 +137,16 @@ export function Header({
           <HugeiconsIcon icon={SidebarLeftIcon} size={18} strokeWidth={1.75} />
         </Button>
 
+        <Button
+          onClick={onOpenFolder}
+          title="Open folder"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <HugeiconsIcon icon={Folder01Icon} size={17} strokeWidth={1.75} />
+        </Button>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -178,10 +189,7 @@ export function Header({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {!IS_MAC && <NotificationBell
-            onActivate={onActivateAgent}
-            onActivateLocal={onActivateLocalAgent}
-          />}
+        {!IS_MAC && <NotificationBell onActivate={onActivateAgent} />}
       </div>
 
       {!IS_MAC && <span className="mx-1 h-5 w-px shrink-0 bg-border" />}
@@ -213,10 +221,7 @@ export function Header({
 
       {IS_MAC && (
         <>
-          <NotificationBell
-            onActivate={onActivateAgent}
-            onActivateLocal={onActivateLocalAgent}
-          />
+          <NotificationBell onActivate={onActivateAgent} />
           {settingsButton}
         </>
       )}

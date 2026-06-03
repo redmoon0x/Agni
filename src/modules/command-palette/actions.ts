@@ -7,6 +7,7 @@ import {
   ArrowRight01Icon,
   Cancel01Icon,
   FileEditIcon,
+  Folder01Icon,
   Globe02Icon,
   IncognitoIcon,
   KeyboardIcon,
@@ -15,7 +16,7 @@ import {
   Search01Icon,
   Settings01Icon,
   SidebarLeftIcon,
-  SparklesIcon,
+  
   TerminalIcon,
 } from "@hugeicons/core-free-icons";
 
@@ -26,8 +27,7 @@ export type CommandPaletteActionGroup =
   | "Tabs"
   | "Panes"
   | "View"
-  | "Search"
-  | "AI";
+  | "Search";
 
 export type CommandPaletteAction = {
   id: string;
@@ -42,7 +42,7 @@ export type CommandPaletteAction = {
 };
 
 export const COMMAND_PALETTE_ACTION_GROUPS: readonly CommandPaletteActionGroup[] =
-  ["General", "Tabs", "Panes", "View", "Search", "AI"] as const;
+  ["General", "Tabs", "Panes", "View", "Search"] as const;
 
 export type CommandPaletteActionContext = {
   tabs: Tab[];
@@ -52,6 +52,7 @@ export type CommandPaletteActionContext = {
   home: string | null;
   openNewTab: () => void;
   openNewPrivate: () => void;
+  openFolder: () => void;
   openNewEditor: () => void;
   openNewPreview: () => void;
   closeActiveTabOrPane: () => void;
@@ -64,8 +65,6 @@ export type CommandPaletteActionContext = {
   focusSearch: () => void;
   focusExplorerSearch: () => void;
   toggleSidebar: () => void;
-  toggleAi: () => void;
-  askAiSelection: () => void;
   openSettings: () => void;
   openShortcuts: () => void;
 };
@@ -114,6 +113,14 @@ export function createCommandPaletteActions(
       shortcutId: "shortcuts.open",
       run: ctx.openShortcuts,
       deferRun: true,
+    },
+    {
+      id: "workspace.openFolder",
+      label: "Open folder",
+      group: "General",
+      keywords: ["open", "folder", "directory", "workspace", "browse"],
+      icon: Folder01Icon,
+      run: ctx.openFolder,
     },
     {
       id: "tab.new",
@@ -253,24 +260,6 @@ export function createCommandPaletteActions(
       disabledReason: ctx.searchTarget ? undefined : "No searchable view",
       run: ctx.focusSearch,
       deferRun: true,
-    },
-    {
-      id: "ai.toggle",
-      label: "Toggle AI agent",
-      group: "AI",
-      keywords: ["assistant", "chat", "agent"],
-      icon: SparklesIcon,
-      shortcutId: "ai.toggle",
-      run: ctx.toggleAi,
-    },
-    {
-      id: "ai.askSelection",
-      label: "Ask AI about selection",
-      group: "AI",
-      keywords: ["selection", "explain", "assistant", "chat"],
-      icon: SparklesIcon,
-      shortcutId: "ai.askSelection",
-      run: ctx.askAiSelection,
     },
   ];
 }

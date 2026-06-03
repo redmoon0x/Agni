@@ -29,6 +29,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
+import { useAgentStore } from "@/modules/agents/store/agentStore";
 import { labelFor } from "./lib/tabLabel";
 import type { EditorTab, Tab } from "./lib/useTabs";
 
@@ -118,6 +119,7 @@ export function TabBar({
                     )}
                   >
                     <TabIcon tab={t} />
+                    <AgentDot tabId={t.id} />
                     <TabRenameInput
                       initial={labelFor(t)}
                       onCommit={(value) => {
@@ -165,6 +167,7 @@ export function TabBar({
                     )}
                   >
                     <TabIcon tab={t} />
+                    {t.kind === "terminal" ? <AgentDot tabId={t.id} /> : null}
                     {/* Preview tabs use italic to signal the transient state,
                         matching the visual convention from VSCode. */}
                     <span className={cn("truncate", isPreview && "italic")}>
@@ -311,16 +314,6 @@ function TabIcon({ tab }: { tab: Tab }) {
       />
     );
   }
-  if (tab.kind === "ai-diff") {
-    return (
-      <HugeiconsIcon
-        icon={GitCompareIcon}
-        size={14}
-        strokeWidth={2}
-        className="shrink-0"
-      />
-    );
-  }
   if (tab.kind === "terminal" && tab.private) {
     return (
       <HugeiconsIcon
@@ -419,6 +412,20 @@ function TabRenameInput({
         if (!document.hasFocus()) return;
         commit(e.currentTarget.value, false);
       }}
+    />
+  );
+}
+
+/** Green pulsing dot shown on terminal tabs that have an active agent. */
+function AgentDot({ tabId }: { tabId: number }) {
+  const hasAgent = useAgentStore((s) =>
+    Object.values(s.sessions).some((a) => a.tabId === tabId),
+  );
+  if (!hasAgent) return null;
+  return (
+    <span
+      aria-label="Agent running"
+      className="size-1.5 shrink-0 rounded-full bg-green-500 animate-pulse"
     />
   );
 }
