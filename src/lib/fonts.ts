@@ -16,7 +16,8 @@ const NERD_FONT_CANDIDATES = [
   "Hasklug Nerd Font",
 ];
 
-const FALLBACK_CHAIN = '"JetBrains Mono", SFMono-Regular, Menlo, monospace';
+const FALLBACK_CHAIN =
+  '"JetBrains Mono", "Nirmala UI", "Noto Sans Kannada", Tunga, SFMono-Regular, Menlo, monospace';
 
 let detected: string | null = null;
 let monoReady: Promise<void> | null = null;

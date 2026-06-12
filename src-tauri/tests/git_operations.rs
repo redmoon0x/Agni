@@ -64,6 +64,31 @@ fn resolve_repo_returns_branch_for_unborn_head() {
 }
 
 #[test]
+fn branches_lists_existing_local_branches() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("seed.txt", "seed\n");
+    fx.run_git(&["add", "seed.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    fx.run_git(&["branch", "dev/search"]);
+
+    let branches =
+        operations::branches(&fx.registry, &fx.repo_str(), &fx.workspace).expect("branches");
+
+    let main = branches
+        .iter()
+        .find(|branch| branch.name == "main")
+        .expect("main branch");
+    assert!(main.current);
+    assert!(!main.remote);
+    assert!(branches
+        .iter()
+        .any(|branch| branch.name == "dev/search" && !branch.remote));
+}
+
+#[test]
 fn status_on_empty_repo_has_no_files() {
     if skip_if_no_git() {
         return;

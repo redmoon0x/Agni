@@ -9,6 +9,12 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import {
+  hasClipboardImage,
+  pasteClipboardImageFromEvent,
+  pasteClipboardIntoTerminal,
+} from "./clipboardImage";
+import { installIndicTextSupport } from "./indicText";
+import {
   terminalDeleteSequence,
   terminalLineNavigationSequence,
   terminalWordNavigationSequence,
@@ -128,6 +134,7 @@ export function applyBackgroundActive(active: boolean): void {
 
 function createSlot(): Slot {
   const term = new Terminal(termOptions());
+  installIndicTextSupport(term);
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
   const serializeAddon = new SerializeAddon();
@@ -165,6 +172,18 @@ function createSlot(): Slot {
     lastH: 0,
     lastUsedAt: 0,
   };
+
+  host.addEventListener(
+    "paste",
+    (event) => {
+      if (!hasClipboardImage(event.clipboardData)) return;
+      event.preventDefault();
+      void pasteClipboardImageFromEvent(event.clipboardData, (text) =>
+        slot.term.paste(text),
+      ).catch((err) => console.warn("[agni] image paste failed:", err));
+    },
+    { capture: true },
+  );
 
   attachWebgl(slot);
 
@@ -217,12 +236,9 @@ function createSlot(): Slot {
     }
     if (isTerminalPaste(event)) {
       if (event.type === "keydown") {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) slot.term.paste(text);
-          })
-          .catch(() => {});
+        void pasteClipboardIntoTerminal((text) => slot.term.paste(text)).catch(
+          () => {},
+        );
       }
       event.preventDefault();
       return false;

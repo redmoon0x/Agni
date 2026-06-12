@@ -71,6 +71,28 @@ import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { useTabCloseGuards } from "./hooks/useTabCloseGuards";
 import { useWorkspaceSwitcher } from "./hooks/useWorkspaceSwitcher";
 
+function agentDisplayName(agent: string): string {
+  switch (agent.toLowerCase()) {
+    case "claude":
+    case "claudecode":
+    case "claude-code":
+      return "Claude Code";
+    case "codex":
+      return "Codex";
+    case "gemini":
+      return "Gemini";
+    case "opencode":
+    case "open-code":
+      return "OpenCode";
+    case "pi":
+      return "Pi";
+    case "agy":
+      return "Agy";
+    default:
+      return agent;
+  }
+}
+
 export default function App() {
   const {
     tabs,
@@ -82,6 +104,7 @@ export default function App() {
     pinTab,
     newPreviewTab,
     newMarkdownTab,
+    newHtmlPreviewTab,
     openGitDiffTab,
     openCommitHistoryTab,
     openCommitFileDiffTab,
@@ -290,7 +313,9 @@ export default function App() {
   const handlePathRenamed = useCallback(
     (from: string, to: string) => {
       for (const t of tabs) {
-        if (t.kind !== "editor") continue;
+        if (t.kind !== "editor" && t.kind !== "markdown" && t.kind !== "html") {
+          continue;
+        }
         if (t.path === from) {
           const i = to.lastIndexOf("/");
           updateTab(t.id, { path: to, title: i === -1 ? to : to.slice(i + 1) });
@@ -317,6 +342,9 @@ export default function App() {
 
   const activeFilePath = (() => {
     if (activeTab?.kind === "editor") return activeTab.path;
+    if (activeTab?.kind === "markdown" || activeTab?.kind === "html") {
+      return activeTab.path;
+    }
     if (activeTab?.kind === "git-diff") {
       if (/^([A-Za-z]:|\/|\\)/.test(activeTab.path)) return activeTab.path;
       const root = activeTab.repoRoot.replace(/[\\/]+$/, "");
@@ -331,7 +359,9 @@ export default function App() {
     return null;
   })();
   const explorerActiveFilePath =
-    activeTab?.kind === "editor" || activeTab?.kind === "markdown"
+    activeTab?.kind === "editor" ||
+    activeTab?.kind === "markdown" ||
+    activeTab?.kind === "html"
       ? activeTab.path
       : null;
   const { sourceControl, toggleSourceControl, openGitGraphFromContext } =
@@ -364,6 +394,13 @@ export default function App() {
       newMarkdownTab(path);
     },
     [newMarkdownTab],
+  );
+
+  const openHtmlPreview = useCallback(
+    (path: string) => {
+      newHtmlPreviewTab(path);
+    },
+    [newHtmlPreviewTab],
   );
 
   const splitActivePaneInActiveTab = useCallback(
@@ -522,7 +559,9 @@ export default function App() {
       const tab = tabsRef.current.find((t) => t.id === tabId);
       if (!tab || tab.kind !== "terminal") return;
       if (tab.customTitle) return;
-      updateTab(tabId, { customTitle: `${agent}: ${tab.title}` });
+      updateTab(tabId, {
+        customTitle: `${agentDisplayName(agent)}: ${tab.title}`,
+      });
     },
     [updateTab],
   );
@@ -711,6 +750,7 @@ export default function App() {
                         onPathDeleted={handlePathDeleted}
                         onRevealInTerminal={cdInNewTab}
                         onOpenMarkdownPreview={openMarkdownPreview}
+                        onOpenHtmlPreview={openHtmlPreview}
                       />
                     ) : (
                       <SourceControlPanel

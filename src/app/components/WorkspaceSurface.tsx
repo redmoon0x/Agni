@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import { EditorStack, GitDiffStack } from "@/modules/editor";
 import { GitHistoryStack } from "@/modules/git-history";
+import { HtmlPreviewStack } from "@/modules/html-preview";
 import { MarkdownStack } from "@/modules/markdown";
 import { PreviewStack } from "@/modules/preview";
 import type { Tab } from "@/modules/tabs";
@@ -57,6 +58,7 @@ export function WorkspaceSurface({
   const isEditorTab = kind === "editor";
   const isPreviewTab = kind === "preview";
   const isMarkdownTab = kind === "markdown";
+  const isHtmlPreviewTab = kind === "html";
   const isGitDiffTab = kind === "git-diff" || kind === "git-commit-file";
   const isGitHistoryTab = kind === "git-history";
 
@@ -116,6 +118,15 @@ export function WorkspaceSurface({
         aria-hidden={!isMarkdownTab}
       >
         <MarkdownStack tabs={tabs} activeId={activeId} />
+      </div>
+      <div
+        className={cn(
+          "absolute inset-0 px-3 pt-2 pb-2",
+          !isHtmlPreviewTab && "invisible pointer-events-none",
+        )}
+        aria-hidden={!isHtmlPreviewTab}
+      >
+        <HtmlPreviewStack tabs={tabs} activeId={activeId} />
       </div>
       <div
         className={cn(

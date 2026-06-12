@@ -300,7 +300,7 @@ export function TabBar({
 }
 
 function TabIcon({ tab }: { tab: Tab }) {
-  if (tab.kind === "editor" || tab.kind === "markdown") {
+  if (tab.kind === "editor" || tab.kind === "markdown" || tab.kind === "html") {
     const url = fileIconUrl(tab.title);
     return url ? <img src={url} alt="" className="size-3.5 shrink-0" /> : null;
   }

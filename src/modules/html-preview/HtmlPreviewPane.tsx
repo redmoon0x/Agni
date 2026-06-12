@@ -1,0 +1,120 @@
+import { cn } from "@/lib/utils";
+import { currentWorkspaceEnv } from "@/modules/workspace";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useState } from "react";
+
+type ReadResult =
+  | { kind: "text"; content: string; size: number }
+  | { kind: "binary"; size: number }
+  | { kind: "toolarge"; size: number; limit: number };
+
+type Status =
+  | { kind: "loading" }
+  | { kind: "ready"; content: string }
+  | { kind: "binary" }
+  | { kind: "toolarge"; size: number; limit: number }
+  | { kind: "error"; message: string };
+
+type Props = {
+  path: string;
+  visible: boolean;
+};
+
+function fileBaseHref(path: string): string | undefined {
+  if (path.startsWith("/")) {
+    const dir = path.slice(0, path.lastIndexOf("/") + 1);
+    return `file://${encodeURI(dir)}`;
+  }
+  if (/^[A-Za-z]:\//.test(path)) {
+    const dir = path.slice(0, path.lastIndexOf("/") + 1).replace(/\\/g, "/");
+    return `file:///${encodeURI(dir)}`;
+  }
+  if (/^[A-Za-z]:\\/.test(path)) {
+    const dir = path.slice(0, path.lastIndexOf("\\") + 1).replace(/\\/g, "/");
+    return `file:///${encodeURI(dir)}`;
+  }
+  return undefined;
+}
+
+function withBaseHref(content: string, href: string | undefined): string {
+  if (!href) return content;
+  const base = `<base href="${href}">`;
+  if (/<head\b[^>]*>/i.test(content)) {
+    return content.replace(/<head\b[^>]*>/i, (match) => `${match}${base}`);
+  }
+  return `${base}${content}`;
+}
+
+export function HtmlPreviewPane({ path, visible }: Props) {
+  const [status, setStatus] = useState<Status>({ kind: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setStatus({ kind: "loading" });
+    invoke<ReadResult>("fs_read_file", { path, workspace: currentWorkspaceEnv() })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.kind === "text") {
+          setStatus({ kind: "ready", content: res.content });
+        } else if (res.kind === "binary") {
+          setStatus({ kind: "binary" });
+        } else {
+          setStatus({ kind: "toolarge", size: res.size, limit: res.limit });
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setStatus({ kind: "error", message: String(e) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  const srcDoc = useMemo(
+    () =>
+      status.kind === "ready"
+        ? withBaseHref(status.content, fileBaseHref(path))
+        : "",
+    [path, status],
+  );
+
+  return (
+    <div
+      className={cn(
+        "flex h-full w-full flex-col overflow-hidden rounded-md border border-border/60 bg-background",
+        !visible && "pointer-events-none",
+      )}
+    >
+      {status.kind === "ready" ? (
+        <iframe
+          srcDoc={srcDoc}
+          title="HTML Preview"
+          className="h-full w-full border-0 bg-white"
+          sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <div className="flex-1 overflow-auto px-6 py-4">
+          {status.kind === "loading" && (
+            <p className="text-[12px] text-muted-foreground">Loading...</p>
+          )}
+          {status.kind === "error" && (
+            <p className="text-[12px] text-destructive">
+              Failed to read file: {status.message}
+            </p>
+          )}
+          {status.kind === "binary" && (
+            <p className="text-[12px] text-muted-foreground">
+              Binary file - cannot render as HTML.
+            </p>
+          )}
+          {status.kind === "toolarge" && (
+            <p className="text-[12px] text-muted-foreground">
+              File is {status.size} bytes; limit {status.limit}.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

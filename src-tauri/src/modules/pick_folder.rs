@@ -8,8 +8,8 @@ pub async fn pick_folder(
     title: Option<String>,
     start_dir: Option<String>,
 ) -> Result<Option<String>, String> {
-    let mut dialog = rfd::AsyncFileDialog::new()
-        .set_title(&title.unwrap_or_else(|| "Open Folder".into()));
+    let mut dialog =
+        rfd::AsyncFileDialog::new().set_title(&title.unwrap_or_else(|| "Open Folder".into()));
 
     if let Some(dir) = start_dir {
         if let Ok(path) = PathBuf::from(&dir).canonicalize() {

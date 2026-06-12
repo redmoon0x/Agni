@@ -12,6 +12,7 @@ import {
   type SplitDir,
 } from "@/modules/terminal/lib/panes";
 import { disposeSession } from "@/modules/terminal/lib/useTerminalSession";
+import { createTerminalTab } from "./terminalTab";
 
 // Matches the renderer slot pool size — over this we'd evict an active leaf.
 export const MAX_PANES_PER_TAB = 4;
@@ -57,6 +58,13 @@ export type MarkdownTab = {
   path: string;
 };
 
+export type HtmlPreviewTab = {
+  id: number;
+  kind: "html";
+  title: string;
+  path: string;
+};
+
 export type GitDiffTab = {
   id: number;
   kind: "git-diff";
@@ -91,6 +99,7 @@ export type Tab =
   | EditorTab
   | PreviewTab
   | MarkdownTab
+  | HtmlPreviewTab
   | GitDiffTab
   | GitHistoryTab
   | GitCommitFileDiffTab;
@@ -124,14 +133,13 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     const tabId = 1;
     const leafId = 2;
     return [
-      {
-        id: tabId,
-        kind: "terminal",
+      createTerminalTab({
+        tabId,
+        leafId,
         title: initial?.title ?? "shell",
         cwd: initial?.cwd,
-        paneTree: { kind: "leaf", id: leafId, cwd: initial?.cwd },
-        activeLeafId: leafId,
-      },
+        private: initial?.private,
+      }),
     ];
   });
   const [activeId, setActiveId] = useState(1);
@@ -147,15 +155,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     const leafId = nextIdRef.current++;
     setTabs((t) => [
       ...t,
-      {
-        id: tabId,
-        kind: "terminal",
-        title: "shell",
-        cwd,
-        paneTree: { kind: "leaf", id: leafId, cwd },
-        activeLeafId: leafId,
-        private: true,
-      },
+      createTerminalTab({ tabId, leafId, title: "shell", cwd }),
     ]);
     setActiveId(tabId);
     return tabId;
@@ -166,14 +166,13 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     const leafId = nextIdRef.current++;
     setTabs((t) => [
       ...t,
-      {
-        id: tabId,
-        kind: "terminal",
+      createTerminalTab({
+        tabId,
+        leafId,
         title: "private",
         cwd,
-        paneTree: { kind: "leaf", id: leafId, cwd },
-        activeLeafId: leafId,
-      },
+        private: true,
+      }),
     ]);
     setActiveId(tabId);
     return tabId;
@@ -297,6 +296,22 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       const id = nextIdRef.current++;
       targetId = id;
       return [...curr, { id, kind: "markdown", title: basename(path), path }];
+    });
+    if (targetId !== null) setActiveId(targetId);
+    return targetId;
+  }, []);
+
+  const newHtmlPreviewTab = useCallback((path: string) => {
+    let targetId: number | null = null;
+    setTabs((curr) => {
+      const existing = curr.find((t) => t.kind === "html" && t.path === path);
+      if (existing) {
+        targetId = existing.id;
+        return curr;
+      }
+      const id = nextIdRef.current++;
+      targetId = id;
+      return [...curr, { id, kind: "html", title: basename(path), path }];
     });
     if (targetId !== null) setActiveId(targetId);
     return targetId;
@@ -496,6 +511,12 @@ export function useTabs(initial?: Partial<TerminalTab>) {
             ...(patch.title !== undefined && { title: patch.title }),
           };
         }
+        if (x.kind === "html") {
+          return {
+            ...x,
+            ...(patch.title !== undefined && { title: patch.title }),
+          };
+        }
         // editor tab: auto-promote from preview the moment the file becomes dirty.
         const autoPin =
           patch.dirty === true && (x as EditorTab).preview
@@ -673,14 +694,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         t.kind === "terminal" ? leafIds(t.paneTree) : [],
       );
       return [
-        {
-          id: tabId,
-          kind: "terminal",
-          title: "shell",
-          cwd,
-          paneTree: { kind: "leaf", id: leafId, cwd },
-          activeLeafId: leafId,
-        },
+        createTerminalTab({ tabId, leafId, title: "shell", cwd }),
       ];
     });
     setActiveId(tabId);
@@ -697,6 +711,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     pinTab,
     newPreviewTab,
     newMarkdownTab,
+    newHtmlPreviewTab,
     openGitDiffTab,
     openCommitHistoryTab,
     openCommitFileDiffTab,

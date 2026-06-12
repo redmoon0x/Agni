@@ -6,7 +6,17 @@ const ST_FINAL: u8 = b'\\';
 const OSC_MAX: usize = 2048;
 
 const DEFAULT_AGENTS: &[&str] = &[
-    "claude", "codex", "pi", "opencode", "agy", "gemini",
+    "claude",
+    "claudecode",
+    "claude-code",
+    "claude_code",
+    "codex",
+    "pi",
+    "opencode",
+    "open-code",
+    "open_code",
+    "agy",
+    "gemini",
 ];
 
 // OSC 777 marker our Claude Code hooks emit via `terminalSequence`.
@@ -45,11 +55,31 @@ pub struct AgentSignal {
 impl Transition {
     pub fn into_signal(self, id: u32) -> AgentSignal {
         match self {
-            Transition::Started { agent } => AgentSignal { id, kind: "started", agent: Some(agent) },
-            Transition::Working => AgentSignal { id, kind: "working", agent: None },
-            Transition::Attention => AgentSignal { id, kind: "attention", agent: None },
-            Transition::Finished => AgentSignal { id, kind: "finished", agent: None },
-            Transition::Exited => AgentSignal { id, kind: "exited", agent: None },
+            Transition::Started { agent } => AgentSignal {
+                id,
+                kind: "started",
+                agent: Some(agent),
+            },
+            Transition::Working => AgentSignal {
+                id,
+                kind: "working",
+                agent: None,
+            },
+            Transition::Attention => AgentSignal {
+                id,
+                kind: "attention",
+                agent: None,
+            },
+            Transition::Finished => AgentSignal {
+                id,
+                kind: "finished",
+                agent: None,
+            },
+            Transition::Exited => AgentSignal {
+                id,
+                kind: "exited",
+                agent: None,
+            },
         }
     }
 }
@@ -68,38 +98,75 @@ impl AgentDetector {
     }
 
     pub fn with_agents(agents: Vec<String>) -> Self {
-        Self { agents, state: State::Ground, osc: Vec::new(), armed: false, status: Status::Working }
+        Self {
+            agents,
+            state: State::Ground,
+            osc: Vec::new(),
+            armed: false,
+            status: Status::Working,
+        }
     }
 
     pub fn process<F: FnMut(Transition)>(&mut self, input: &[u8], mut emit: F) {
-        if self.state == State::Ground && !input.contains(&ESC) { return; }
+        if self.state == State::Ground && !input.contains(&ESC) {
+            return;
+        }
         for &b in input {
             match self.state {
-                State::Ground => { if b == ESC { self.state = State::Esc; } }
+                State::Ground => {
+                    if b == ESC {
+                        self.state = State::Esc;
+                    }
+                }
                 State::Esc => match b {
-                    OSC_INTRO => { self.state = State::Osc; self.osc.clear(); }
+                    OSC_INTRO => {
+                        self.state = State::Osc;
+                        self.osc.clear();
+                    }
                     ESC => {}
                     _ => self.state = State::Ground,
                 },
                 State::Osc => match b {
-                    BEL => { self.finish_osc(&mut emit); self.state = State::Ground; }
+                    BEL => {
+                        self.finish_osc(&mut emit);
+                        self.state = State::Ground;
+                    }
                     ESC => self.state = State::OscEsc,
-                    _ => { if self.osc.len() < OSC_MAX { self.osc.push(b); } else { self.osc.clear(); self.state = State::Ground; } }
+                    _ => {
+                        if self.osc.len() < OSC_MAX {
+                            self.osc.push(b);
+                        } else {
+                            self.osc.clear();
+                            self.state = State::Ground;
+                        }
+                    }
                 },
                 State::OscEsc => match b {
-                    ST_FINAL => { self.finish_osc(&mut emit); self.state = State::Ground; }
+                    ST_FINAL => {
+                        self.finish_osc(&mut emit);
+                        self.state = State::Ground;
+                    }
                     ESC => {}
-                    _ => { self.osc.clear(); self.state = State::Ground; }
+                    _ => {
+                        self.osc.clear();
+                        self.state = State::Ground;
+                    }
                 },
             }
         }
     }
 
     pub fn finish<F: FnMut(Transition)>(&mut self, mut emit: F) {
-        if self.armed { self.disarm(); emit(Transition::Exited); }
+        if self.armed {
+            self.disarm();
+            emit(Transition::Exited);
+        }
     }
 
-    fn disarm(&mut self) { self.armed = false; self.status = Status::Working; }
+    fn disarm(&mut self) {
+        self.armed = false;
+        self.status = Status::Working;
+    }
 
     fn finish_osc<F: FnMut(Transition)>(&mut self, emit: &mut F) {
         let body = std::mem::take(&mut self.osc);
@@ -118,9 +185,20 @@ impl AgentDetector {
     fn handle_osc777<F: FnMut(Transition)>(&mut self, pt: &[u8], emit: &mut F) {
         if let Some(event) = pt.strip_prefix(AGNI_MARKER) {
             match event {
-                b"working" => { self.ensure_armed(emit); self.set_working(emit); }
-                b"attention" => { self.ensure_armed(emit); self.status = Status::Waiting; emit(Transition::Attention); }
-                b"finished" => { self.ensure_armed(emit); self.status = Status::Waiting; emit(Transition::Finished); }
+                b"working" => {
+                    self.ensure_armed(emit);
+                    self.set_working(emit);
+                }
+                b"attention" => {
+                    self.ensure_armed(emit);
+                    self.status = Status::Waiting;
+                    emit(Transition::Attention);
+                }
+                b"finished" => {
+                    self.ensure_armed(emit);
+                    self.status = Status::Waiting;
+                    emit(Transition::Finished);
+                }
                 _ => {}
             }
             return;
@@ -131,7 +209,9 @@ impl AgentDetector {
     fn handle_osc133<F: FnMut(Transition)>(&mut self, pt: &[u8], emit: &mut F) {
         match pt.first() {
             Some(b'C') => {
-                if self.armed { return; }
+                if self.armed {
+                    return;
+                }
                 let cmd = pt.strip_prefix(b"C;").unwrap_or(b"");
                 if let Some(agent) = self.match_agent(cmd) {
                     self.armed = true;
@@ -139,32 +219,123 @@ impl AgentDetector {
                     emit(Transition::Started { agent });
                 }
             }
-            Some(b'D') if self.armed => { self.disarm(); emit(Transition::Exited); }
+            Some(b'D') if self.armed => {
+                self.disarm();
+                emit(Transition::Exited);
+            }
             _ => {}
         }
     }
 
     fn ensure_armed<F: FnMut(Transition)>(&mut self, emit: &mut F) {
-        if !self.armed { self.armed = true; self.status = Status::Working; emit(Transition::Started { agent: "claude".into() }); }
+        if !self.armed {
+            self.armed = true;
+            self.status = Status::Working;
+            emit(Transition::Started {
+                agent: "claude".into(),
+            });
+        }
     }
 
     fn set_working<F: FnMut(Transition)>(&mut self, emit: &mut F) {
-        if self.status != Status::Working { self.status = Status::Working; emit(Transition::Working); }
+        if self.status != Status::Working {
+            self.status = Status::Working;
+            emit(Transition::Working);
+        }
     }
 
     fn generic_attention<F: FnMut(Transition)>(&mut self, emit: &mut F) {
-        if self.armed { self.status = Status::Waiting; emit(Transition::Attention); }
+        if self.armed {
+            self.status = Status::Waiting;
+            emit(Transition::Attention);
+        }
     }
 
     fn match_agent(&self, cmd: &[u8]) -> Option<String> {
         let cmd = std::str::from_utf8(cmd).ok()?;
         for token in cmd.split_whitespace() {
-            if token.starts_with('-') { continue; }
+            if token.starts_with('-') {
+                continue;
+            }
             let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
-            if let Some(agent) = self.agents.iter().find(|a| base.strip_prefix(a.as_str()).is_some_and(|r| r.is_empty() || r.starts_with('-')) ) {
-                return Some(agent.clone());
+            let base = strip_windows_command_suffix(base);
+            let base = base.to_ascii_lowercase();
+            if let Some(agent) = self.agents.iter().find(|a| {
+                base.strip_prefix(a.as_str())
+                    .is_some_and(|r| r.is_empty() || r.starts_with('-'))
+            }) {
+                return Some(canonical_agent(agent).to_string());
             }
         }
         None
+    }
+}
+
+fn strip_windows_command_suffix(base: &str) -> &str {
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if base
+            .get(base.len().saturating_sub(suffix.len())..)
+            .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
+        {
+            return &base[..base.len() - suffix.len()];
+        }
+    }
+    base
+}
+
+fn canonical_agent(agent: &str) -> &str {
+    match agent {
+        "claudecode" | "claude-code" | "claude_code" => "claude",
+        "open-code" | "open_code" => "opencode",
+        _ => agent,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn detect(cmd: &str) -> Option<String> {
+        AgentDetector::new().match_agent(cmd.as_bytes())
+    }
+
+    #[test]
+    fn matches_common_agent_commands() {
+        for (cmd, expected) in [
+            ("pi", "pi"),
+            ("gemini", "gemini"),
+            ("opencode", "opencode"),
+            ("claude", "claude"),
+            ("claudecode", "claude"),
+        ] {
+            assert_eq!(detect(cmd).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn matches_windows_command_shims() {
+        assert_eq!(detect("opencode.cmd").as_deref(), Some("opencode"));
+        assert_eq!(detect("gemini.exe").as_deref(), Some("gemini"));
+        assert_eq!(detect("claudecode.ps1").as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn scans_launcher_arguments_for_agent_name() {
+        assert_eq!(detect("pnpm dlx opencode").as_deref(), Some("opencode"));
+    }
+
+    #[test]
+    fn osc_command_start_emits_started_signal() {
+        let mut detector = AgentDetector::new();
+        let mut transitions = Vec::new();
+
+        detector.process(b"\x1b]133;C;Gemini.exe\x1b\\", |t| transitions.push(t));
+
+        assert_eq!(
+            transitions,
+            vec![Transition::Started {
+                agent: "gemini".into()
+            }]
+        );
     }
 }

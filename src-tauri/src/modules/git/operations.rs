@@ -8,9 +8,9 @@ use crate::modules::git::process::{
     read_text_file, run_git,
 };
 use crate::modules::git::types::{
-    DiscardEntry, GitCommitFileChange, GitCommitResult, GitDiffContentResult, GitDiffResult,
-    GitLogEntry, GitOutput, GitPanelSnapshot, GitPushResult, GitRepoInfo, GitStatusSnapshot,
-    TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
+    DiscardEntry, GitBranch, GitCommitFileChange, GitCommitResult, GitDeleteMergedBranchesResult,
+    GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot, GitPushResult,
+    GitRepoInfo, GitStatusSnapshot, TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
 };
 use crate::modules::git::utils::{
     authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream, ResolvedGitDirectory,
@@ -124,6 +124,197 @@ pub fn status(
     let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
     ensure_git_available(&repo_root.workspace)?;
     status_inner(&repo_root)
+}
+
+pub fn branches(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<Vec<GitBranch>> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        [
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname)\t%(refname:short)\t%(upstream:short)\t%(HEAD)\t%(committerdate:relative)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git branch list failed")?;
+    let stdout = std::str::from_utf8(&output.stdout).unwrap_or("");
+    Ok(parse_branch_list(stdout))
+}
+
+pub fn checkout_branch(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    name: &str,
+    remote: bool,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    validate_existing_branch_name(name)?;
+    let args: Vec<OsString> = if remote {
+        vec!["switch".into(), "--track".into(), name.into()]
+    } else {
+        vec!["switch".into(), name.into()]
+    };
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        args,
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git switch failed")
+}
+
+pub fn create_branch(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    name: &str,
+    checkout: bool,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    validate_new_branch_name(&repo_root, name)?;
+    let args: Vec<OsString> = if checkout {
+        vec!["switch".into(), "-c".into(), name.into()]
+    } else {
+        vec!["branch".into(), name.into()]
+    };
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        args,
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git branch create failed")
+}
+
+pub fn delete_merged_branches(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<GitDeleteMergedBranchesResult> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let status = status_inner(&repo_root)?;
+    if status.is_detached {
+        return Err(GitError::command(
+            "git branch delete merged",
+            "cannot delete merged branches while HEAD is detached",
+        ));
+    }
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["branch", "--merged", "HEAD", "--format=%(refname:short)"],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git branch --merged failed")?;
+    let stdout = std::str::from_utf8(&output.stdout).unwrap_or("");
+    let mut deleted = Vec::new();
+    let mut skipped = Vec::new();
+    for raw in stdout.lines() {
+        let name = raw.trim().trim_start_matches('*').trim();
+        if name.is_empty() || name == status.branch {
+            continue;
+        }
+        if is_protected_branch_name(name) {
+            skipped.push(name.to_string());
+            continue;
+        }
+        validate_existing_branch_name(name)?;
+        let output = run_git(
+            &repo_root.workspace,
+            Some(&repo_root.git_path),
+            [OsStr::new("branch"), OsStr::new("-d"), OsStr::new(name)],
+            DEFAULT_TIMEOUT_SECS,
+        )?;
+        if output.exit_code == Some(0) {
+            deleted.push(name.to_string());
+        } else {
+            skipped.push(name.to_string());
+        }
+    }
+    Ok(GitDeleteMergedBranchesResult { deleted, skipped })
+}
+
+fn parse_branch_list(stdout: &str) -> Vec<GitBranch> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let mut fields = line.trim_end_matches('\r').splitn(5, '\t');
+        let full_name = fields.next().unwrap_or("").to_string();
+        let name = fields.next().unwrap_or("").to_string();
+        let upstream = fields.next().unwrap_or("");
+        let head = fields.next().unwrap_or("");
+        let last_commit = fields.next().unwrap_or("");
+        if full_name.is_empty()
+            || name.is_empty()
+            || full_name.ends_with("/HEAD")
+            || name.ends_with("/HEAD")
+        {
+            continue;
+        }
+        out.push(GitBranch {
+            remote: full_name.starts_with("refs/remotes/"),
+            current: head == "*",
+            upstream: if upstream.is_empty() {
+                None
+            } else {
+                Some(upstream.to_string())
+            },
+            last_commit: if last_commit.is_empty() {
+                None
+            } else {
+                Some(last_commit.to_string())
+            },
+            full_name,
+            name,
+        });
+    }
+    out
+}
+
+fn validate_existing_branch_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.starts_with('-')
+        || name.contains('\0')
+        || name.contains('\n')
+        || name.contains('\r')
+    {
+        return Err(GitError::command("git branch", "invalid branch name"));
+    }
+    Ok(())
+}
+
+fn validate_new_branch_name(repo_root: &ResolvedGitDirectory, name: &str) -> Result<()> {
+    validate_existing_branch_name(name)?;
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        [
+            OsStr::new("check-ref-format"),
+            OsStr::new("--branch"),
+            OsStr::new(name),
+        ],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "invalid branch name")
+}
+
+fn is_protected_branch_name(name: &str) -> bool {
+    matches!(
+        name,
+        "main" | "master" | "develop" | "development" | "dev" | "trunk"
+    )
 }
 
 fn status_inner(repo_root: &ResolvedGitDirectory) -> Result<GitStatusSnapshot> {
@@ -313,12 +504,7 @@ pub fn unstage(
     if !looks_like_no_head(&output) {
         return ensure_success(&output, "git reset failed");
     }
-    let mut rm_args: Vec<OsString> = vec![
-        "rm".into(),
-        "--cached".into(),
-        "-r".into(),
-        "--".into(),
-    ];
+    let mut rm_args: Vec<OsString> = vec!["rm".into(), "--cached".into(), "-r".into(), "--".into()];
     for p in &resolved {
         rm_args.push(p.clone().into());
     }
@@ -1021,6 +1207,26 @@ mod tests {
     #[test]
     fn parse_shortstat_returns_zeros_when_absent() {
         assert_eq!(parse_shortstat("no stat here"), (0, 0, 0));
+    }
+
+    #[test]
+    fn parse_branch_list_splits_local_and_remote_refs() {
+        let input = [
+            "refs/heads/main\tmain\torigin/main\t*\t2 minutes ago",
+            "refs/remotes/origin/main\torigin/main\t\t\t3 minutes ago",
+            "refs/remotes/origin/HEAD\torigin\t\t\t3 minutes ago",
+        ]
+        .join("\n");
+
+        let branches = parse_branch_list(&input);
+
+        assert_eq!(branches.len(), 2);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].current);
+        assert!(!branches[0].remote);
+        assert_eq!(branches[0].upstream.as_deref(), Some("origin/main"));
+        assert_eq!(branches[1].name, "origin/main");
+        assert!(branches[1].remote);
     }
 
     #[test]

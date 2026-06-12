@@ -5,7 +5,10 @@ export async function pickFolder(
   title?: string,
   startDir?: string,
 ): Promise<string | null> {
-  return invoke("pick_folder", { title: title ?? null, startDir: startDir ?? null });
+  return invoke("pick_folder", {
+    title: title ?? null,
+    startDir: startDir ?? null,
+  });
 }
 
 export async function workspaceAuthorize(cwd: string): Promise<void> {
@@ -53,6 +56,20 @@ export type GitStatusSnapshot = {
 export type GitPanelSnapshot = {
   repo: GitRepoInfo | null;
   status: GitStatusSnapshot | null;
+};
+
+export type GitBranch = {
+  name: string;
+  fullName: string;
+  remote: boolean;
+  current: boolean;
+  upstream: string | null;
+  lastCommit: string | null;
+};
+
+export type GitDeleteMergedBranchesResult = {
+  deleted: string[];
+  skipped: string[];
 };
 
 export type GitLogEntry = {
@@ -109,6 +126,51 @@ export async function gitStatus(
   return invoke("git_status", { repoRoot, workspace: workspace ?? null });
 }
 
+export async function gitBranches(
+  repoRoot: string,
+  workspace?: WorkspaceEnv,
+): Promise<GitBranch[]> {
+  return invoke("git_branches", { repoRoot, workspace: workspace ?? null });
+}
+
+export async function gitCheckoutBranch(
+  repoRoot: string,
+  name: string,
+  remote: boolean,
+  workspace?: WorkspaceEnv,
+): Promise<void> {
+  await invoke("git_checkout_branch", {
+    repoRoot,
+    name,
+    remote,
+    workspace: workspace ?? null,
+  });
+}
+
+export async function gitCreateBranch(
+  repoRoot: string,
+  name: string,
+  checkout: boolean,
+  workspace?: WorkspaceEnv,
+): Promise<void> {
+  await invoke("git_create_branch", {
+    repoRoot,
+    name,
+    checkout,
+    workspace: workspace ?? null,
+  });
+}
+
+export async function gitDeleteMergedBranches(
+  repoRoot: string,
+  workspace?: WorkspaceEnv,
+): Promise<GitDeleteMergedBranchesResult> {
+  return invoke("git_delete_merged_branches", {
+    repoRoot,
+    workspace: workspace ?? null,
+  });
+}
+
 export async function gitPanelSnapshot(
   cwd: string,
   workspace?: WorkspaceEnv,
@@ -141,7 +203,11 @@ export async function gitCommitFiles(
   sha: string,
   workspace?: WorkspaceEnv,
 ): Promise<GitCommitFileChange[]> {
-  return invoke("git_commit_files", { repoRoot, sha, workspace: workspace ?? null });
+  return invoke("git_commit_files", {
+    repoRoot,
+    sha,
+    workspace: workspace ?? null,
+  });
 }
 
 export async function gitCommit(
@@ -149,7 +215,11 @@ export async function gitCommit(
   message: string,
   workspace?: WorkspaceEnv,
 ): Promise<GitCommitResult> {
-  return invoke("git_commit", { repoRoot, message, workspace: workspace ?? null });
+  return invoke("git_commit", {
+    repoRoot,
+    message,
+    workspace: workspace ?? null,
+  });
 }
 
 export async function gitStage(
@@ -165,7 +235,11 @@ export async function gitUnstage(
   paths: string[],
   workspace?: WorkspaceEnv,
 ): Promise<void> {
-  await invoke("git_unstage", { repoRoot, paths, workspace: workspace ?? null });
+  await invoke("git_unstage", {
+    repoRoot,
+    paths,
+    workspace: workspace ?? null,
+  });
 }
 
 export async function gitDiscard(
@@ -173,7 +247,11 @@ export async function gitDiscard(
   entries: GitDiscardEntry[],
   workspace?: WorkspaceEnv,
 ): Promise<void> {
-  await invoke("git_discard", { repoRoot, entries, workspace: workspace ?? null });
+  await invoke("git_discard", {
+    repoRoot,
+    entries,
+    workspace: workspace ?? null,
+  });
 }
 
 export async function gitFetch(
@@ -246,7 +324,11 @@ export async function gitShowCommit(
   sha: string,
   workspace?: WorkspaceEnv,
 ): Promise<GitDiffResult> {
-  return invoke("git_show_commit", { repoRoot, sha, workspace: workspace ?? null });
+  return invoke("git_show_commit", {
+    repoRoot,
+    sha,
+    workspace: workspace ?? null,
+  });
 }
 
 export async function gitDiff(
@@ -255,7 +337,12 @@ export async function gitDiff(
   staged: boolean,
   workspace?: WorkspaceEnv,
 ): Promise<GitDiffResult> {
-  return invoke("git_diff", { repoRoot, path, staged, workspace: workspace ?? null });
+  return invoke("git_diff", {
+    repoRoot,
+    path,
+    staged,
+    workspace: workspace ?? null,
+  });
 }
 
 export const native = {
@@ -263,6 +350,10 @@ export const native = {
   workspaceAuthorize,
   workspaceCurrentDir,
   gitStatus,
+  gitBranches,
+  gitCheckoutBranch,
+  gitCreateBranch,
+  gitDeleteMergedBranches,
   gitPanelSnapshot,
   gitResolveRepo,
   gitLog,

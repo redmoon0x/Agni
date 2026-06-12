@@ -49,6 +49,24 @@ pub struct GitPanelSnapshot {
     pub status: Option<GitStatusSnapshot>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub name: String,
+    pub full_name: String,
+    pub remote: bool,
+    pub current: bool,
+    pub upstream: Option<String>,
+    pub last_commit: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDeleteMergedBranchesResult {
+    pub deleted: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscardEntry {

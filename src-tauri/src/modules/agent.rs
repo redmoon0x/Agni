@@ -15,24 +15,40 @@ fn hook_cmd(event: &str) -> String {
 }
 
 fn is_ours(group: &Value) -> bool {
-    group.get("hooks").and_then(Value::as_array).is_some_and(|hs| {
-        hs.iter().any(|h| h.get("command").and_then(Value::as_str).is_some_and(|c| OWNED_MARKERS.iter().any(|m| c.contains(m))))
-    })
+    group
+        .get("hooks")
+        .and_then(Value::as_array)
+        .is_some_and(|hs| {
+            hs.iter().any(|h| {
+                h.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|c| OWNED_MARKERS.iter().any(|m| c.contains(m)))
+            })
+        })
 }
 
 fn is_empty_group(group: &Value) -> bool {
-    group.get("hooks").and_then(Value::as_array).is_none_or(|hs| hs.is_empty())
+    group
+        .get("hooks")
+        .and_then(Value::as_array)
+        .is_none_or(|hs| hs.is_empty())
 }
 
 fn merge_hooks(mut root: Value) -> Value {
-    if !root.is_object() { root = json!({}); }
+    if !root.is_object() {
+        root = json!({});
+    }
     let obj = root.as_object_mut().unwrap();
     let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
-    if !hooks.is_object() { *hooks = json!({}); }
+    if !hooks.is_object() {
+        *hooks = json!({});
+    }
     let hooks = hooks.as_object_mut().unwrap();
     for (event, marker) in HOOK_EVENTS {
         let arr = hooks.entry(event).or_insert_with(|| json!([]));
-        if !arr.is_array() { *arr = json!([]); }
+        if !arr.is_array() {
+            *arr = json!([]);
+        }
         let arr = arr.as_array_mut().unwrap();
         arr.retain(|group| !is_ours(group) && !is_empty_group(group));
         arr.push(json!({ "hooks": [ { "type": "command", "command": hook_cmd(marker) } ] }));
@@ -42,13 +58,21 @@ fn merge_hooks(mut root: Value) -> Value {
 
 fn existing_config(contents: Option<&str>, path: &std::path::Path) -> Result<Value, String> {
     match contents {
-        Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).map_err(|e| format!("{} is not valid JSON ({e}); refusing to overwrite", path.display())),
+        Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({e}); refusing to overwrite",
+                path.display()
+            )
+        }),
         _ => Ok(json!({})),
     }
 }
 
 fn settings_path() -> Result<std::path::PathBuf, String> {
-    Ok(dirs::home_dir().ok_or_else(|| "could not resolve home dir".to_string())?.join(".claude").join("settings.json"))
+    Ok(dirs::home_dir()
+        .ok_or_else(|| "could not resolve home dir".to_string())?
+        .join(".claude")
+        .join("settings.json"))
 }
 
 #[tauri::command]
@@ -65,12 +89,22 @@ pub fn agent_enable_claude_hooks() -> Result<(), String> {
     let out = serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.agni-tmp");
     std::fs::write(&tmp, out).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("rename into {}: {e}", path.display()) })?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename into {}: {e}", path.display())
+    })?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn agent_claude_hooks_status() -> bool {
-    let Some(content) = settings_path().ok().and_then(|p| std::fs::read_to_string(p).ok()) else { return false };
-    HOOK_EVENTS.iter().all(|(_, m)| content.contains(&format!("notify;Agni;{m}")))
+    let Some(content) = settings_path()
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+    else {
+        return false;
+    };
+    HOOK_EVENTS
+        .iter()
+        .all(|(_, m)| content.contains(&format!("notify;Agni;{m}")))
 }

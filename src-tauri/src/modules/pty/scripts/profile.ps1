@@ -32,6 +32,25 @@ function global:__agni_urlencode {
     $sb.ToString()
 }
 
+function global:__agni_command_start {
+    param([string]$line)
+    if ([string]::IsNullOrWhiteSpace($line)) { return $true }
+    $clean = $line -replace '[\x00-\x1F\x7F]', ' '
+    if ($clean.Length -gt 256) { $clean = $clean.Substring(0, 256) }
+    $esc = [char]27
+    [Console]::Write("$esc]133;C;$clean$esc\")
+    return $true
+}
+
+try {
+    if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {
+        Set-PSReadLineOption -AddToHistoryHandler {
+            param([string]$line)
+            __agni_command_start $line
+        }
+    }
+} catch {}
+
 function global:prompt {
     $lec = $LASTEXITCODE
     if ($null -eq $lec) { $lec = if ($?) { 0 } else { 1 } }

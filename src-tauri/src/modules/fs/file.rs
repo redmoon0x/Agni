@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use std::{fs, io::Write};
 
@@ -10,6 +12,7 @@ use crate::modules::workspace::{resolve_path, WorkspaceEnv};
 
 const MAX_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+const MAX_CLIPBOARD_IMAGE_BYTES: usize = 25 * 1024 * 1024;
 
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -161,6 +164,98 @@ pub fn fs_stat(path: String, workspace: Option<WorkspaceEnv>) -> Result<FileStat
     })
 }
 
+fn image_ext_for_mime(mime: &str) -> Option<&'static str> {
+    match mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/bmp" => Some("bmp"),
+        _ => None,
+    }
+}
+
+fn clipboard_image_name(ext: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("agni-clipboard-{}-{nanos}.{ext}", std::process::id())
+}
+
+fn local_clipboard_image_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Agni")
+        .join("clipboard-images")
+}
+
+#[tauri::command]
+pub fn fs_save_clipboard_image(
+    mime: String,
+    bytes: Vec<u8>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("clipboard image is empty".into());
+    }
+    if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err(format!(
+            "clipboard image exceeds {} MB",
+            MAX_CLIPBOARD_IMAGE_BYTES / 1024 / 1024
+        ));
+    }
+    let ext = image_ext_for_mime(&mime).ok_or_else(|| format!("unsupported image type: {mime}"))?;
+    let workspace = WorkspaceEnv::from_option(workspace);
+    let name = clipboard_image_name(ext);
+    let terminal_path = if workspace.is_wsl() {
+        format!("/tmp/agni-clipboard/{name}")
+    } else {
+        super::to_canon(local_clipboard_image_dir().join(name))
+    };
+    let target = if workspace.is_wsl() {
+        resolve_path(&terminal_path, &workspace)
+    } else {
+        PathBuf::from(&terminal_path)
+    };
+    let parent = target
+        .parent()
+        .ok_or_else(|| "clipboard image path has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| {
+        log::warn!(
+            "fs_save_clipboard_image mkdir({}) failed: {e}",
+            parent.display()
+        );
+        e.to_string()
+    })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| {
+            log::warn!(
+                "fs_save_clipboard_image create({}) failed: {e}",
+                target.display()
+            );
+            e.to_string()
+        })?;
+    file.write_all(&bytes).map_err(|e| {
+        log::warn!(
+            "fs_save_clipboard_image write({}) failed: {e}",
+            target.display()
+        );
+        e.to_string()
+    })?;
+    Ok(terminal_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +324,13 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"payload");
         // The pre-staged symlink target must not have been written through.
         assert_eq!(std::fs::read(&outside).unwrap(), b"untouched");
+    }
+
+    #[test]
+    fn saves_clipboard_image_to_cache_file() {
+        let path = fs_save_clipboard_image("image/png".into(), vec![1, 2, 3], None).unwrap();
+        assert!(path.ends_with(".png"), "got: {path}");
+        assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3]);
+        std::fs::remove_file(path).unwrap();
     }
 }
