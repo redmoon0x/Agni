@@ -24,6 +24,7 @@ import {
   getSlotForLeaf,
   releaseSlot,
   setSlotFocused,
+  touchSlot,
 } from "./rendererPool";
 
 type Callbacks = {
@@ -52,8 +53,8 @@ type Session = {
   dormantRing: DormantRing;
   hasSlot: boolean;
   // True if the slot was in alt-screen mode (TUI like vim, htop, dofek)
-  // at the most recent release. Read once on the next bind to trigger a
-  // SIGWINCH-driven repaint instead of replaying dormant bytes.
+  // at the most recent release. Read once on the next bind to replay dormant
+  // bytes and then trigger a SIGWINCH-driven repaint.
   altScreenAtRelease: boolean;
 };
 
@@ -478,10 +479,11 @@ export function useTerminalSession({
     s.focusedNow = focused;
     if (visible) {
       if (s.container && !s.hasSlot) bindLeafToSlot(leafId, s);
+      touchSlot(leafId);
       setSlotFocused(leafId, focused);
       if (focused) focusSlot(leafId);
-    } else if (s.hasSlot) {
-      unbindLeafFromSlot(leafId, s);
+    } else {
+      setSlotFocused(leafId, false);
     }
   }, [leafId, visible, focused]);
 

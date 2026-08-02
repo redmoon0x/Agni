@@ -253,22 +253,76 @@ impl AgentDetector {
 
     fn match_agent(&self, cmd: &[u8]) -> Option<String> {
         let cmd = std::str::from_utf8(cmd).ok()?;
-        for token in cmd.split_whitespace() {
-            if token.starts_with('-') {
-                continue;
+        let tokens: Vec<&str> = cmd.split_whitespace().collect();
+        let mut index = next_command_token(&tokens, 0)?;
+
+        loop {
+            let base = command_base(tokens[index]);
+            if let Some(agent) = self.match_agent_base(&base) {
+                return Some(agent);
             }
-            let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
-            let base = strip_windows_command_suffix(base);
-            let base = base.to_ascii_lowercase();
-            if let Some(agent) = self.agents.iter().find(|a| {
-                base.strip_prefix(a.as_str())
-                    .is_some_and(|r| r.is_empty() || r.starts_with('-'))
-            }) {
-                return Some(canonical_agent(agent).to_string());
+
+            match base.as_str() {
+                "command" | "exec" | "nohup" | "sudo" => {
+                    index = next_command_token(&tokens, index + 1)?;
+                }
+                "env" => {
+                    index = next_command_token(&tokens, index + 1)?;
+                    while is_env_assignment(tokens[index]) {
+                        index = next_command_token(&tokens, index + 1)?;
+                    }
+                }
+                "npx" | "bunx" | "uvx" => {
+                    let package = next_command_token(&tokens, index + 1)?;
+                    return self.match_agent_base(&command_base(tokens[package]));
+                }
+                "npm" | "pnpm" | "yarn" => {
+                    let subcommand_index = next_command_token(&tokens, index + 1)?;
+                    let subcommand = clean_token(tokens[subcommand_index]).to_ascii_lowercase();
+                    if !matches!(subcommand.as_str(), "dlx" | "exec" | "x") {
+                        return None;
+                    }
+                    let package = next_command_token(&tokens, subcommand_index + 1)?;
+                    return self.match_agent_base(&command_base(tokens[package]));
+                }
+                _ => return None,
             }
         }
-        None
     }
+
+    fn match_agent_base(&self, base: &str) -> Option<String> {
+        self.agents
+            .iter()
+            .find(|agent| {
+                base.strip_prefix(agent.as_str())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+            })
+            .map(|agent| canonical_agent(agent).to_string())
+    }
+}
+
+fn next_command_token(tokens: &[&str], start: usize) -> Option<usize> {
+    (start..tokens.len()).find(|&index| {
+        let token = clean_token(tokens[index]);
+        !token.is_empty() && !token.starts_with('-') && !is_env_assignment(token)
+    })
+}
+
+fn is_env_assignment(token: &str) -> bool {
+    let token = clean_token(token);
+    token
+        .split_once('=')
+        .is_some_and(|(name, _)| !name.is_empty() && !name.contains(['/', '\\']))
+}
+
+fn clean_token(token: &str) -> &str {
+    token.trim_matches(['\'', '"'])
+}
+
+fn command_base(token: &str) -> String {
+    let token = clean_token(token);
+    let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
+    strip_windows_command_suffix(base).to_ascii_lowercase()
 }
 
 fn strip_windows_command_suffix(base: &str) -> &str {
@@ -322,6 +376,30 @@ mod tests {
     #[test]
     fn scans_launcher_arguments_for_agent_name() {
         assert_eq!(detect("pnpm dlx opencode").as_deref(), Some("opencode"));
+        assert_eq!(
+            detect("npx -y @google/gemini-cli").as_deref(),
+            Some("gemini")
+        );
+    }
+
+    #[test]
+    fn ignores_agent_names_in_ordinary_arguments() {
+        for cmd in [
+            "echo gemini",
+            "cd /repos/gemini",
+            "rg gemini",
+            "npm install @google/gemini-cli",
+            "pnpm add gemini",
+        ] {
+            assert_eq!(detect(cmd), None, "false positive for {cmd}");
+        }
+    }
+
+    #[test]
+    fn matches_wrapped_agent_commands() {
+        assert_eq!(detect("sudo -E gemini").as_deref(), Some("gemini"));
+        assert_eq!(detect("AGENT_MODE=1 codex").as_deref(), Some("codex"));
+        assert_eq!(detect("env DEBUG=1 claude").as_deref(), Some("claude"));
     }
 
     #[test]

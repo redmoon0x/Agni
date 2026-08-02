@@ -295,8 +295,8 @@ export type AcquireParams = {
   container: HTMLDivElement;
   snapshot: string | null;
   // True if the slot was in alt-screen mode (TUI like vim, htop, dofek)
-  // at the time it was released. When set, bindSlot skips ring replay
-  // and kicks SIGWINCH so the TUI repaints from scratch.
+  // at the time it was released. The replay is followed by SIGWINCH so a
+  // still-running TUI can repaint from scratch.
   altScreen: boolean;
   drainRing: (write: (bytes: Uint8Array) => void) => void;
   shellExited: boolean;
@@ -360,14 +360,7 @@ function bindSlot(slot: Slot, p: AcquireParams): void {
       console.warn("[agni] snapshot replay failed:", e);
     }
   }
-  if (p.altScreen) {
-    // Discard the dormant ring. TUI output is incremental cursor-positioned
-    // updates that can't be replayed coherently on top of a stale snapshot
-    // — see the SIGWINCH kick below, which makes the TUI redraw from scratch.
-    p.drainRing(() => {});
-  } else {
-    p.drainRing((bytes) => slot.term.write(bytes));
-  }
+  p.drainRing((bytes) => slot.term.write(bytes));
   try {
     slot.term.write("\x1b[?25h");
   } catch {}
@@ -713,6 +706,11 @@ export function setSlotFocused(leafId: number, focused: boolean): void {
   const slot = slots.find((s) => s.currentLeafId === leafId);
   if (!slot) return;
   applyCursorBlinkOnSlot(slot, focused);
+}
+
+export function touchSlot(leafId: number): void {
+  const slot = slots.find((s) => s.currentLeafId === leafId);
+  if (slot) slot.lastUsedAt = performance.now();
 }
 
 function applyCursorBlinkOnSlot(slot: Slot, focused: boolean): void {

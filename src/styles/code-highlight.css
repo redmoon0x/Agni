@@ -81,6 +81,7 @@
 }
 
 .tok-variableName,
+.tok-variableName2,
 .tok-name {
   color: var(--tok-name);
 }

@@ -4,6 +4,18 @@ import { CheckmarkCircle01Icon, CopyIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 
+/** Streamdown `components.code` override for inline `` `code` `` spans. */
+export function InlineCode({ className, children, ...rest }: { className?: string; children?: ReactNode }) {
+  return (
+    <code
+      className="rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+      {...rest}
+    >
+      {children}
+    </code>
+  );
+}
+
 /**
  * Streamdown `components.pre` override. Handles fenced code blocks:
  * detects `language-X` from the child `<code>` element's className,

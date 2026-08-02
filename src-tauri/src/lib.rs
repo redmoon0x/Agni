@@ -1,6 +1,6 @@
 pub mod modules;
 
-use modules::{agent, fs, git, pick_folder, pty, shell, workspace};
+use modules::{agent, fs, git, pi, pick_folder, pty, shell, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
@@ -140,6 +140,7 @@ pub fn run() {
             Ok(())
         })
         .manage(pty::PtyState::default())
+        .manage(pi::PiState::default())
         .manage(fs::watch::FsWatchState::default())
         .manage({
             let registry = workspace::WorkspaceRegistry::default();
@@ -156,6 +157,11 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_close,
             pty::pty_close_all,
+            pi::pi_start,
+            pi::pi_send,
+            pi::pi_stop,
+            pi::pi_close_all,
+            pi::pi_list_sessions,
             pty::pty_has_foreground_process,
             fs::tree::list_subdirs,
             fs::tree::fs_read_dir,

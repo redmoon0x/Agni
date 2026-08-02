@@ -1,9 +1,67 @@
 import { detectMonoFontFamily } from "@/lib/fonts";
-import { indentUnit } from "@codemirror/language";
+import {
+  HighlightStyle,
+  indentUnit,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { lintGutter } from "@codemirror/lint";
 import { search } from "@codemirror/search";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
+
+// Editor themes (esp. atomone, the default) only style a handful of tags —
+// enough for JS/Python but not type-heavy languages like Rust, which lean on
+// typeName/namespace/macroName/lifetimes. `fallback: true` means this only
+// paints tags the active theme leaves uncolored, never overrides it. Reuses
+// the --tok-* palette already defined for markdown code blocks.
+const fallbackHighlightStyle = HighlightStyle.define(
+  [
+    { tag: [tags.typeName, tags.namespace], color: "var(--tok-type)" },
+    {
+      tag: [
+        tags.variableName,
+        tags.self,
+        tags.special(tags.variableName),
+        tags.definition(tags.variableName),
+      ],
+      color: "var(--tok-name)",
+    },
+    {
+      tag: [tags.macroName, tags.function(tags.variableName)],
+      color: "var(--tok-name)",
+      fontWeight: "500",
+    },
+    { tag: [tags.bool, tags.atom], color: "var(--tok-bool)" },
+    {
+      tag: [
+        tags.operator,
+        tags.derefOperator,
+        tags.arithmeticOperator,
+        tags.logicOperator,
+        tags.bitwiseOperator,
+        tags.compareOperator,
+        tags.updateOperator,
+      ],
+      color: "var(--tok-operator)",
+    },
+    {
+      tag: [
+        tags.punctuation,
+        tags.bracket,
+        tags.paren,
+        tags.brace,
+        tags.squareBracket,
+        tags.separator,
+      ],
+      color: "var(--tok-punctuation)",
+    },
+    {
+      tag: [tags.meta, tags.annotation, tags.processingInstruction],
+      color: "var(--tok-meta)",
+    },
+  ],
+);
 
 // Compartments allow runtime reconfiguration without rebuilding state.
 export const languageCompartment = new Compartment();
@@ -21,6 +79,7 @@ export function buildSharedExtensions(): Extension[] {
     EditorState.tabSize.of(2),
     search({ top: true }),
     lintGutter(),
+    syntaxHighlighting(fallbackHighlightStyle, { fallback: true }),
     EditorView.theme({
       "&, &.cm-editor, &.cm-editor.cm-focused": {
         backgroundColor: "transparent !important",

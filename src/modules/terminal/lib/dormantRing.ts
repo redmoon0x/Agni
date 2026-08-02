@@ -1,8 +1,8 @@
 const DEFAULT_BYTE_CAP = 256 * 1024;
-const DEFAULT_CHUNK_CAP = 256;
+const MERGE_TARGET_BYTES = 16 * 1024;
 
 const OVERFLOW_NOTICE = new TextEncoder().encode(
-  "\x1bc\x1b[2m[agni: dropped output during hibernation]\x1b[0m\r\n",
+  "\r\n\x1b[2m[agni: older output dropped during hibernation]\x1b[0m\r\n",
 );
 
 export class DormantRing {
@@ -12,33 +12,50 @@ export class DormantRing {
   private total = 0;
   private overflowed = false;
 
-  constructor(
-    private readonly byteCap = DEFAULT_BYTE_CAP,
-    private readonly chunkCap = DEFAULT_CHUNK_CAP,
-  ) {}
+  constructor(private readonly byteCap = DEFAULT_BYTE_CAP) {}
 
   push(bytes: Uint8Array): void {
     if (bytes.length === 0) return;
     if (bytes.length >= this.byteCap) {
-      this.chunks = [OVERFLOW_NOTICE, bytes.subarray(bytes.length - this.byteCap)];
+      this.chunks = [bytes.subarray(bytes.length - this.byteCap)];
       this.head = 0;
-      this.size = 2;
-      this.total = OVERFLOW_NOTICE.length + this.byteCap;
+      this.size = 1;
+      this.total = this.byteCap;
       this.overflowed = true;
       return;
     }
-    this.chunks.push(bytes);
-    this.size++;
+
+    const tailIndex = this.head + this.size - 1;
+    const tail = tailIndex >= this.head ? this.chunks[tailIndex] : null;
+    if (tail && tail.length + bytes.length <= MERGE_TARGET_BYTES) {
+      const merged = new Uint8Array(tail.length + bytes.length);
+      merged.set(tail);
+      merged.set(bytes, tail.length);
+      this.chunks[tailIndex] = merged;
+    } else {
+      this.chunks.push(bytes);
+      this.size++;
+    }
     this.total += bytes.length;
-    while (
-      (this.total > this.byteCap || this.size > this.chunkCap) &&
-      this.size > 1
-    ) {
-      const dropped = this.chunks[this.head]!;
+
+    while (this.total > this.byteCap && this.size > 0) {
+      const first = this.chunks[this.head];
+      if (!first) {
+        this.head++;
+        this.size--;
+        continue;
+      }
+      const excess = this.total - this.byteCap;
+      if (first.length > excess) {
+        this.chunks[this.head] = first.subarray(excess);
+        this.total -= excess;
+        this.overflowed = true;
+        break;
+      }
       this.chunks[this.head] = null;
       this.head++;
       this.size--;
-      this.total -= dropped.length;
+      this.total -= first.length;
       this.overflowed = true;
     }
     if (this.head > 1024 && this.head > this.chunks.length / 2) {
@@ -48,10 +65,7 @@ export class DormantRing {
   }
 
   drain(write: (bytes: Uint8Array) => void): void {
-    if (this.overflowed) {
-      const first = this.chunks[this.head];
-      if (first !== OVERFLOW_NOTICE) write(OVERFLOW_NOTICE);
-    }
+    if (this.overflowed) write(OVERFLOW_NOTICE);
     const end = this.head + this.size;
     for (let i = this.head; i < end; i++) {
       const c = this.chunks[i];

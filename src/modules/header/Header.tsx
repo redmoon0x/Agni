@@ -16,6 +16,7 @@ import {
 import type { Tab } from "@/modules/tabs";
 import { TabBar } from "@/modules/tabs";
 import { NotificationBell } from "@/modules/agents";
+import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
 import {
   Folder01Icon,
   GridViewIcon,
@@ -47,6 +48,8 @@ type Props = {
   /** Set a terminal tab's custom label; empty string resets to default. */
   onRename: (id: number, title: string) => void;
   onToggleSidebar: () => void;
+  onTogglePiPanel: () => void;
+  piPanelOpen: boolean;
   onSplit: (dir: "row" | "col") => void;
   /** Active tab is a terminal and below the per-tab pane cap. */
   canSplit: boolean;
@@ -72,6 +75,8 @@ export function Header({
   onPin,
   onRename,
   onToggleSidebar,
+  onTogglePiPanel,
+  piPanelOpen,
   onSplit,
   canSplit,
   onActivateAgent,
@@ -115,6 +120,22 @@ export function Header({
       title="Settings"
     >
       <HugeiconsIcon icon={Settings01Icon} size={15} strokeWidth={1.75} />
+    </Button>
+  );
+
+  const piPanelButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className={`size-7 shrink-0 rounded-md hover:bg-accent hover:text-foreground ${
+        piPanelOpen ? "bg-accent text-foreground" : "text-muted-foreground"
+      }`}
+      onClick={onTogglePiPanel}
+      title="Toggle Pi panel"
+      aria-label="Toggle Pi panel"
+      aria-pressed={piPanelOpen}
+    >
+      <PiLogoIcon size={15} />
     </Button>
   );
 
@@ -222,11 +243,17 @@ export function Header({
       {IS_MAC && (
         <>
           <NotificationBell onActivate={onActivateAgent} />
+          {piPanelButton}
           {settingsButton}
         </>
       )}
 
-      {!IS_MAC && settingsButton}
+      {!IS_MAC && (
+        <>
+          {piPanelButton}
+          {settingsButton}
+        </>
+      )}
 
       {USE_CUSTOM_WINDOW_CONTROLS && (
         <>

@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
-import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
+import { InlineCode, MarkdownCodeBlock } from "./MarkdownCodeBlock";
 
 type ReadResult =
   | { kind: "text"; content: string; size: number }
@@ -21,17 +21,6 @@ type Props = {
   path: string;
   visible: boolean;
 };
-
-function InlineCode({ className, children, ...rest }: { className?: string; children?: ReactNode }) {
-  return (
-    <code
-      className="rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] text-foreground"
-      {...rest}
-    >
-      {children}
-    </code>
-  );
-}
 
 const components = { code: InlineCode, pre: MarkdownCodeBlock };
 

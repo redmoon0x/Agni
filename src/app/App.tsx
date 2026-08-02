@@ -28,6 +28,8 @@ import {
 } from "@/modules/header";
 import type { PreviewPaneHandle } from "@/modules/preview";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
+import { PiPanel } from "@/modules/pi-agent";
+import { SearchPanel } from "@/modules/search";
 import {
   ShortcutsDialog,
   useGlobalShortcuts,
@@ -36,8 +38,11 @@ import {
 } from "@/modules/shortcuts";
 import {
   SidebarRail,
+  RIGHT_PANEL_MAX_WIDTH,
+  RIGHT_PANEL_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  useRightPanel,
   useSidebarPanel,
 } from "@/modules/sidebar";
 import {
@@ -181,6 +186,12 @@ export default function App() {
     persistSidebarWidth,
     toggleExplorerFocus,
   } = useSidebarPanel(explorerRef);
+  const {
+    rightPanelRef,
+    rightPanelOpen,
+    toggleRightPanel,
+    handleRightPanelResize,
+  } = useRightPanel();
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [newEditorOpen, setNewEditorOpen] = useState(false);
@@ -306,6 +317,25 @@ export default function App() {
   const handleOpenFile = useCallback(
     (path: string, pin?: boolean) => {
       openFileTab(path, pin ?? false);
+    },
+    [openFileTab],
+  );
+
+  const handleOpenSearchResult = useCallback(
+    (path: string, line: number) => {
+      const id = openFileTab(path, true);
+      if (id == null) return;
+      // ponytail: file content loads async (fs_read_file invoke), so the
+      // CodeMirror view may not be mounted yet. Poll briefly until gotoLine
+      // reports success; upgrade to an onReady callback if this proves flaky.
+      let attempts = 0;
+      const tryGoto = () => {
+        const ok = editorRefs.current.get(id)?.gotoLine(line) ?? false;
+        if (ok) return;
+        attempts += 1;
+        if (attempts < 15) setTimeout(tryGoto, 100);
+      };
+      tryGoto();
     },
     [openFileTab],
   );
@@ -708,6 +738,8 @@ export default function App() {
               onPin={pinTab}
               onRename={handleRenameTab}
               onToggleSidebar={toggleSidebar}
+              onTogglePiPanel={toggleRightPanel}
+              piPanelOpen={rightPanelOpen}
               onSplit={splitActivePaneInActiveTab}
               canSplit={
                 activeTerminalTab !== null &&
@@ -752,6 +784,11 @@ export default function App() {
                         onOpenMarkdownPreview={openMarkdownPreview}
                         onOpenHtmlPreview={openHtmlPreview}
                       />
+                    ) : sidebarView === "search" ? (
+                      <SearchPanel
+                        rootPath={explorerRoot}
+                        onOpenResult={handleOpenSearchResult}
+                      />
                     ) : (
                       <SourceControlPanel
                         open
@@ -791,6 +828,23 @@ export default function App() {
                       onGitHistorySearchHandle={setGitHistoryHandle}
                     />
                   </div>
+                </div>
+              </ResizablePanel>
+              {rightPanelOpen ? <ResizableHandle withHandle /> : null}
+              <ResizablePanel
+                id="pi-panel"
+                panelRef={rightPanelRef}
+                defaultSize="0px"
+                minSize={`${RIGHT_PANEL_MIN_WIDTH}px`}
+                maxSize={`${RIGHT_PANEL_MAX_WIDTH}px`}
+                collapsible
+                collapsedSize={0}
+                onResize={(size) => handleRightPanelResize(size.inPixels)}
+              >
+                <div className="h-full min-h-0 border-l border-border/60 bg-card">
+                  {rightPanelOpen ? (
+                    <PiPanel cwd={explorerRoot} workspace={workspaceEnv} />
+                  ) : null}
                 </div>
               </ResizablePanel>
             </ResizablePanelGroup>

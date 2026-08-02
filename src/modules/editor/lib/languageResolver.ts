@@ -95,6 +95,9 @@ const loaders: Record<string, LanguageLoader> = {
   // Java
   java: () => import("@codemirror/legacy-modes/mode/clike").then((m) => m.java),
 
+  // Dart
+  dart: () => import("@codemirror/legacy-modes/mode/clike").then((m) => m.dart),
+
   // C#
   cs: () => import("@codemirror/legacy-modes/mode/clike").then((m) => m.csharp),
 
