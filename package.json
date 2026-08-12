@@ -99,7 +99,7 @@
     "@size-limit/file": "^12.1.0",
     "@tailwindcss/vite": "^4.2.3",
     "@tauri-apps/cli": "^2.11.2",
-    "@types/node": "^25.6.0",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
