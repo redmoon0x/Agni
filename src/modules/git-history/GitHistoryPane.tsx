@@ -13,6 +13,7 @@ import {
   type GitLogEntry,
 } from "@/lib/native";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
+import { PathIcon } from "@/modules/explorer/lib/PathIcon";
 import {
   Copy01Icon,
   File02Icon,
@@ -990,7 +991,7 @@ const FileRow = memo(function FileRow({
       className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-accent/40"
     >
       {iconUrl ? (
-        <img src={iconUrl} alt="" className="size-3.5 shrink-0" />
+        <PathIcon url={iconUrl} className="size-3.5" />
       ) : (
         <span className="size-3.5 shrink-0" />
       )}

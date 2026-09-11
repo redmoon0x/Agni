@@ -39,13 +39,13 @@ export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
 export type Preferences = {
   theme: ThemePref;
   themeId: string;
+  lastProjectRoot: string | null;
   backgroundKind: BackgroundKind;
   backgroundImageId: string | null;
   backgroundOpacity: number;
   backgroundBlur: number;
   editorTheme: EditorThemeId;
   autostart: boolean;
-  restoreWindowState: boolean;
   vimMode: boolean;
   showHidden: boolean;
   terminalWebglEnabled: boolean;
@@ -53,7 +53,6 @@ export type Preferences = {
   terminalLetterSpacing: number;
   terminalFontSize: number;
   terminalScrollback: number;
-  lastWslDistro: string | null;
   zoomLevel: number;
   agentNotifications: boolean;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
@@ -64,13 +63,13 @@ export type Preferences = {
 const STORE_PATH = "agni-settings.json";
 const KEY_THEME = "theme";
 const KEY_THEME_ID = "themeId";
+const KEY_LAST_PROJECT_ROOT = "lastProjectRoot";
 const KEY_BG_KIND = "backgroundKind";
 const KEY_BG_IMAGE_ID = "backgroundImageId";
 const KEY_BG_OPACITY = "backgroundOpacity";
 const KEY_BG_BLUR = "backgroundBlur";
 const KEY_EDITOR_THEME = "editorTheme";
 const KEY_AUTOSTART = "autostart";
-const KEY_RESTORE_WINDOW = "restoreWindowState";
 const KEY_VIM_MODE = "vimMode";
 const KEY_SHOW_HIDDEN = "showHidden";
 const LEGACY_KEY_SHOW_HIDDEN_DIRS = "showHiddenDirectories";
@@ -79,7 +78,6 @@ const KEY_TERMINAL_FONT_FAMILY = "terminalFontFamily";
 const KEY_TERMINAL_LETTER_SPACING = "terminalLetterSpacing";
 const KEY_TERMINAL_FONT_SIZE = "terminalFontSize";
 const KEY_TERMINAL_SCROLLBACK = "terminalScrollback";
-const KEY_LAST_WSL_DISTRO = "lastWslDistro";
 const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
 const KEY_SHORTCUTS = "shortcuts";
@@ -104,13 +102,13 @@ export const TERMINAL_SCROLLBACK_PRESETS = [
 export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
   themeId: DEFAULT_THEME_ID,
+  lastProjectRoot: null,
   backgroundKind: "none",
   backgroundImageId: null,
   backgroundOpacity: 0.5,
   backgroundBlur: 0,
   editorTheme: "atomone",
   autostart: false,
-  restoreWindowState: true,
   vimMode: false,
   showHidden: false,
   terminalWebglEnabled: true,
@@ -118,7 +116,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   terminalLetterSpacing: 0,
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   terminalScrollback: TERMINAL_SCROLLBACK_DEFAULT,
-  lastWslDistro: null,
   zoomLevel: 1.0,
   agentNotifications: true,
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
@@ -143,6 +140,9 @@ export async function loadPreferences(): Promise<Preferences> {
   return {
     theme: get<ThemePref>(KEY_THEME) ?? DEFAULT_PREFERENCES.theme,
     themeId: get<string>(KEY_THEME_ID) ?? DEFAULT_PREFERENCES.themeId,
+    lastProjectRoot:
+      get<string | null>(KEY_LAST_PROJECT_ROOT) ??
+      DEFAULT_PREFERENCES.lastProjectRoot,
     backgroundKind:
       get<BackgroundKind>(KEY_BG_KIND) ?? DEFAULT_PREFERENCES.backgroundKind,
     backgroundImageId:
@@ -157,9 +157,6 @@ export async function loadPreferences(): Promise<Preferences> {
     editorTheme:
       get<EditorThemeId>(KEY_EDITOR_THEME) ?? DEFAULT_PREFERENCES.editorTheme,
     autostart: get<boolean>(KEY_AUTOSTART) ?? DEFAULT_PREFERENCES.autostart,
-    restoreWindowState:
-      get<boolean>(KEY_RESTORE_WINDOW) ??
-      DEFAULT_PREFERENCES.restoreWindowState,
     vimMode: get<boolean>(KEY_VIM_MODE) ?? DEFAULT_PREFERENCES.vimMode,
     showHidden:
       get<boolean>(KEY_SHOW_HIDDEN) ??
@@ -181,9 +178,6 @@ export async function loadPreferences(): Promise<Preferences> {
       get<number>(KEY_TERMINAL_SCROLLBACK) ??
         DEFAULT_PREFERENCES.terminalScrollback,
     ),
-    lastWslDistro:
-      get<string | null>(KEY_LAST_WSL_DISTRO) ??
-      DEFAULT_PREFERENCES.lastWslDistro,
     zoomLevel: get<number>(KEY_ZOOM_LEVEL) ?? DEFAULT_PREFERENCES.zoomLevel,
     agentNotifications:
       get<boolean>(KEY_AGENT_NOTIFICATIONS) ??
@@ -207,6 +201,10 @@ export async function setTheme(value: ThemePref): Promise<void> {
 
 export async function setThemeId(value: string): Promise<void> {
   await writePref(KEY_THEME_ID, value);
+}
+
+export async function setLastProjectRoot(value: string | null): Promise<void> {
+  await writePref(KEY_LAST_PROJECT_ROOT, value);
 }
 
 export const BG_OPACITY_RENDER_FACTOR = 0.5;
@@ -243,10 +241,6 @@ export async function setEditorTheme(value: EditorThemeId): Promise<void> {
 
 export async function setAutostart(value: boolean): Promise<void> {
   await writePref(KEY_AUTOSTART, value);
-}
-
-export async function setRestoreWindowState(value: boolean): Promise<void> {
-  await writePref(KEY_RESTORE_WINDOW, value);
 }
 
 export async function setVimMode(value: boolean): Promise<void> {
@@ -292,10 +286,6 @@ export async function setTerminalScrollback(value: number): Promise<void> {
   await writePref(KEY_TERMINAL_SCROLLBACK, clampScrollback(value));
 }
 
-export async function setLastWslDistro(value: string | null): Promise<void> {
-  await writePref(KEY_LAST_WSL_DISTRO, value);
-}
-
 export async function setZoomLevel(value: number): Promise<void> {
   await writePref(KEY_ZOOM_LEVEL, value);
 }
@@ -335,13 +325,13 @@ export async function onPreferencesChange(
   const map: Record<string, PrefKey> = {
     [KEY_THEME]: "theme",
     [KEY_THEME_ID]: "themeId",
+    [KEY_LAST_PROJECT_ROOT]: "lastProjectRoot",
     [KEY_BG_KIND]: "backgroundKind",
     [KEY_BG_IMAGE_ID]: "backgroundImageId",
     [KEY_BG_OPACITY]: "backgroundOpacity",
     [KEY_BG_BLUR]: "backgroundBlur",
     [KEY_EDITOR_THEME]: "editorTheme",
     [KEY_AUTOSTART]: "autostart",
-    [KEY_RESTORE_WINDOW]: "restoreWindowState",
     [KEY_VIM_MODE]: "vimMode",
     [KEY_SHOW_HIDDEN]: "showHidden",
     [KEY_TERMINAL_WEBGL_ENABLED]: "terminalWebglEnabled",
@@ -349,7 +339,6 @@ export async function onPreferencesChange(
     [KEY_TERMINAL_LETTER_SPACING]: "terminalLetterSpacing",
     [KEY_TERMINAL_FONT_SIZE]: "terminalFontSize",
     [KEY_TERMINAL_SCROLLBACK]: "terminalScrollback",
-    [KEY_LAST_WSL_DISTRO]: "lastWslDistro",
     [KEY_ZOOM_LEVEL]: "zoomLevel",
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
     [KEY_SHORTCUTS]: "shortcuts",

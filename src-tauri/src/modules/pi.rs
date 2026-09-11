@@ -14,7 +14,7 @@ use tauri::ipc::Channel;
 use crate::modules::workspace::{authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 
 const MAX_RPC_LINE_BYTES: usize = 2 * 1024 * 1024;
-const MAX_COMMAND_BYTES: usize = 1024 * 1024;
+const MAX_COMMAND_BYTES: usize = 12 * 1024 * 1024;
 const MAX_STDERR_LINE_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Serialize)]

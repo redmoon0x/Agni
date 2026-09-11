@@ -32,6 +32,7 @@ import {
   revealInFinder,
 } from "@/modules/explorer/lib/contextActions";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
+import { PathIcon } from "@/modules/explorer/lib/PathIcon";
 import {
   COMPACT_CONTENT,
   COMPACT_ITEM,
@@ -1010,7 +1011,7 @@ const EntryRow = memo(function EntryRow({
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
           >
             {iconUrl ? (
-              <img src={iconUrl} alt="" className="size-4 shrink-0" />
+              <PathIcon url={iconUrl} className="size-4" />
             ) : (
               <span className="size-4 shrink-0" />
             )}

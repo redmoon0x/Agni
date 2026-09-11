@@ -1,34 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  findLeafCwd,
-  hasLeaf,
-  leafIds,
-  nextLeafId,
-  removeLeaf,
-  setLeafCwd as setLeafCwdInTree,
-  siblingLeafOf,
-  splitLeaf,
-  type PaneNode,
-  type SplitDir,
-} from "@/modules/terminal/lib/panes";
-import { disposeSession } from "@/modules/terminal/lib/useTerminalSession";
-import { createTerminalTab } from "./terminalTab";
-
-// Matches the renderer slot pool size — over this we'd evict an active leaf.
-export const MAX_PANES_PER_TAB = 4;
-
-export type TerminalTab = {
-  id: number;
-  kind: "terminal";
-  title: string;
-  cwd?: string;
-  paneTree: PaneNode;
-  activeLeafId: number;
-
-  /** User-set label that overrides the cwd-derived name. Survives cd. */
-  customTitle?: string;
-  private?: boolean;
-};
 
 export type EditorTab = {
   id: number;
@@ -51,6 +21,13 @@ export type PreviewTab = {
   url: string;
 };
 
+export type HttpClientTab = {
+  id: number;
+  kind: "http-client";
+  title: string;
+  url: string;
+};
+
 export type MarkdownTab = {
   id: number;
   kind: "markdown";
@@ -61,6 +38,20 @@ export type MarkdownTab = {
 export type HtmlPreviewTab = {
   id: number;
   kind: "html";
+  title: string;
+  path: string;
+};
+
+export type ImageTab = {
+  id: number;
+  kind: "image";
+  title: string;
+  path: string;
+};
+
+export type PdfTab = {
+  id: number;
+  kind: "pdf";
   title: string;
   path: string;
 };
@@ -94,24 +85,30 @@ export type GitCommitFileDiffTab = {
   originalPath: string | null;
 };
 
+export type PiTab = {
+  id: number;
+  kind: "pi";
+  title: string;
+};
+
 export type Tab =
-  | TerminalTab
   | EditorTab
   | PreviewTab
   | MarkdownTab
   | HtmlPreviewTab
+  | ImageTab
+  | PdfTab
   | GitDiffTab
   | GitHistoryTab
-  | GitCommitFileDiffTab;
+  | GitCommitFileDiffTab
+  | HttpClientTab
+  | PiTab;
 
 export type TabPatch = Partial<{
   title: string;
-  cwd: string;
   path: string;
   dirty: boolean;
   url: string;
-  /** Empty string resets a terminal tab to its cwd-derived name. */
-  customTitle: string;
 }>;
 
 function basename(path: string): string {
@@ -128,55 +125,15 @@ function titleFromUrl(url: string): string {
   }
 }
 
-export function useTabs(initial?: Partial<TerminalTab>) {
-  const [tabs, setTabs] = useState<Tab[]>(() => {
-    const tabId = 1;
-    const leafId = 2;
-    return [
-      createTerminalTab({
-        tabId,
-        leafId,
-        title: initial?.title ?? "shell",
-        cwd: initial?.cwd,
-        private: initial?.private,
-      }),
-    ];
-  });
-  const [activeId, setActiveId] = useState(1);
-  const nextIdRef = useRef(3);
+export function useTabs() {
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeId, setActiveId] = useState(0);
+  const nextIdRef = useRef(1);
   const tabsRef = useRef(tabs);
 
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
-
-  const newTab = useCallback((cwd?: string) => {
-    const tabId = nextIdRef.current++;
-    const leafId = nextIdRef.current++;
-    setTabs((t) => [
-      ...t,
-      createTerminalTab({ tabId, leafId, title: "shell", cwd }),
-    ]);
-    setActiveId(tabId);
-    return tabId;
-  }, []);
-
-  const newPrivateTab = useCallback((cwd?: string) => {
-    const tabId = nextIdRef.current++;
-    const leafId = nextIdRef.current++;
-    setTabs((t) => [
-      ...t,
-      createTerminalTab({
-        tabId,
-        leafId,
-        title: "private",
-        cwd,
-        private: true,
-      }),
-    ]);
-    setActiveId(tabId);
-    return tabId;
-  }, []);
 
   /**
    * Opens a file in an editor tab.
@@ -283,6 +240,21 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     return id;
   }, []);
 
+  const newHttpClientTab = useCallback((url: string) => {
+    const id = nextIdRef.current++;
+    setTabs((t) => [
+      ...t,
+      {
+        id,
+        kind: "http-client",
+        title: url ? titleFromUrl(url) : "HTTP",
+        url,
+      },
+    ]);
+    setActiveId(id);
+    return id;
+  }, []);
+
   const newMarkdownTab = useCallback((path: string) => {
     let targetId: number | null = null;
     setTabs((curr) => {
@@ -312,6 +284,38 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       const id = nextIdRef.current++;
       targetId = id;
       return [...curr, { id, kind: "html", title: basename(path), path }];
+    });
+    if (targetId !== null) setActiveId(targetId);
+    return targetId;
+  }, []);
+
+  const newImageTab = useCallback((path: string) => {
+    let targetId: number | null = null;
+    setTabs((curr) => {
+      const existing = curr.find((t) => t.kind === "image" && t.path === path);
+      if (existing) {
+        targetId = existing.id;
+        return curr;
+      }
+      const id = nextIdRef.current++;
+      targetId = id;
+      return [...curr, { id, kind: "image", title: basename(path), path }];
+    });
+    if (targetId !== null) setActiveId(targetId);
+    return targetId;
+  }, []);
+
+  const newPdfTab = useCallback((path: string) => {
+    let targetId: number | null = null;
+    setTabs((curr) => {
+      const existing = curr.find((t) => t.kind === "pdf" && t.path === path);
+      if (existing) {
+        targetId = existing.id;
+        return curr;
+      }
+      const id = nextIdRef.current++;
+      targetId = id;
+      return [...curr, { id, kind: "pdf", title: basename(path), path }];
     });
     if (targetId !== null) setActiveId(targetId);
     return targetId;
@@ -376,9 +380,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       const existing = curr.find(
         (t) => t.kind === "git-history" && t.repoRoot === input.repoRoot,
       );
-      const title = input.branch
-        ? `History · ${input.branch}`
-        : "Git History";
+      const title = input.branch ? `History · ${input.branch}` : "Git History";
       if (existing) {
         const nextTabs = curr.map((t) =>
           t.id === existing.id ? { ...t, title } : t,
@@ -463,38 +465,42 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     [],
   );
 
+  /** Pi has a single global session, so there is ever only one Pi tab. */
+  const newPiTab = useCallback(() => {
+    const curr = tabsRef.current;
+    const existing = curr.find((t) => t.kind === "pi");
+    if (existing) {
+      setActiveId(existing.id);
+      return existing.id;
+    }
+    const id = nextIdRef.current++;
+    const nextTabs = [
+      ...curr,
+      { id, kind: "pi", title: "Pi" } satisfies PiTab,
+    ];
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
+    setActiveId(id);
+    return id;
+  }, []);
+
   const closeTab = useCallback((id: number) => {
-    let toDispose: number[] = [];
     setTabs((curr) => {
-      if (curr.length <= 1) return curr;
       const idx = curr.findIndex((t) => t.id === id);
-      const target = curr[idx];
-      if (target && target.kind === "terminal") {
-        toDispose = leafIds(target.paneTree);
-      }
+      if (idx === -1) return curr;
       const next = curr.filter((t) => t.id !== id);
-      setActiveId((active) =>
-        id === active ? next[Math.max(0, idx - 1)].id : active,
-      );
+      setActiveId((active) => {
+        if (id !== active) return active;
+        return next[Math.max(0, idx - 1)]?.id ?? 0;
+      });
       return next;
     });
-    for (const lid of toDispose) disposeSession(lid);
   }, []);
 
   const updateTab = useCallback((id: number, patch: TabPatch) => {
     setTabs((t) =>
       t.map((x) => {
         if (x.id !== id) return x;
-        if (x.kind === "terminal") {
-          return {
-            ...x,
-            ...(patch.title !== undefined && { title: patch.title }),
-            ...(patch.cwd !== undefined && { cwd: patch.cwd }),
-            ...(patch.customTitle !== undefined && {
-              customTitle: patch.customTitle === "" ? undefined : patch.customTitle,
-            }),
-          };
-        }
         if (x.kind === "preview") {
           return {
             ...x,
@@ -505,16 +511,16 @@ export function useTabs(initial?: Partial<TerminalTab>) {
             }),
           };
         }
-        if (x.kind === "markdown") {
+        if (
+          x.kind === "markdown" ||
+          x.kind === "html" ||
+          x.kind === "image" ||
+          x.kind === "pdf"
+        ) {
           return {
             ...x,
             ...(patch.title !== undefined && { title: patch.title }),
-          };
-        }
-        if (x.kind === "html") {
-          return {
-            ...x,
-            ...(patch.title !== undefined && { title: patch.title }),
+            ...(patch.path !== undefined && { path: patch.path }),
           };
         }
         // editor tab: auto-promote from preview the moment the file becomes dirty.
@@ -541,189 +547,30 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     [tabs],
   );
 
-  /** Update a leaf's cwd; mirror to the tab's `cwd` when the leaf is active.
-   * Bails out without setTabs when nothing actually changed — shell integration
-   * re-emits OSC 7 on every prompt, including empty Enters, so this fires at
-   * keystroke rate. Always-setTabs there cascades a paneTree re-render across
-   * every open tab. */
-  const setLeafCwd = useCallback((leafId: number, cwd: string) => {
-    setTabs((curr) => {
-      let changed = false;
-      const next = curr.map((t) => {
-        if (t.kind !== "terminal" || !hasLeaf(t.paneTree, leafId)) return t;
-        const paneTree = setLeafCwdInTree(t.paneTree, leafId, cwd);
-        const isActive = t.activeLeafId === leafId;
-        const cwdChanged = isActive && t.cwd !== cwd;
-        if (paneTree === t.paneTree && !cwdChanged) return t;
-        changed = true;
-        return { ...t, paneTree, ...(cwdChanged && { cwd }) };
-      });
-      return changed ? next : curr;
-    });
-  }, []);
-
-  const focusPane = useCallback((tabId: number, leafId: number) => {
-    setTabs((curr) =>
-      curr.map((t) => {
-        if (t.id !== tabId || t.kind !== "terminal") return t;
-        if (!hasLeaf(t.paneTree, leafId)) return t;
-        if (t.activeLeafId === leafId) return t;
-        const cwd = findLeafCwd(t.paneTree, leafId);
-        return {
-          ...t,
-          activeLeafId: leafId,
-          ...(cwd !== undefined && { cwd }),
-        };
-      }),
-    );
-  }, []);
-
-  const focusNextPaneInTab = useCallback((tabId: number, delta: 1 | -1) => {
-    setTabs((curr) =>
-      curr.map((t) => {
-        if (t.id !== tabId || t.kind !== "terminal") return t;
-        const next = nextLeafId(t.paneTree, t.activeLeafId, delta);
-        if (next === t.activeLeafId) return t;
-        const cwd = findLeafCwd(t.paneTree, next);
-        return { ...t, activeLeafId: next, ...(cwd !== undefined && { cwd }) };
-      }),
-    );
-  }, []);
-
-  /** Split the active leaf of `tabId` along `dir`. Returns the new leaf id. */
-  const splitActivePane = useCallback(
-    (tabId: number, dir: SplitDir): number | null => {
-      let newLeafId: number | null = null;
-      setTabs((curr) =>
-        curr.map((t) => {
-          if (t.id !== tabId || t.kind !== "terminal") return t;
-          if (leafIds(t.paneTree).length >= MAX_PANES_PER_TAB) return t;
-          const splitId = nextIdRef.current++;
-          const leafId = nextIdRef.current++;
-          newLeafId = leafId;
-          const paneTree = splitLeaf(
-            t.paneTree,
-            t.activeLeafId,
-            splitId,
-            leafId,
-            dir,
-            t.cwd,
-          );
-          return { ...t, paneTree, activeLeafId: leafId };
-        }),
-      );
-      return newLeafId;
-    },
-    [],
-  );
-
-  const closePaneByLeaf = useCallback((leafId: number): void => {
-    let didRemove = false;
-    setTabs((curr) => {
-      const tab = curr.find(
-        (t) => t.kind === "terminal" && hasLeaf(t.paneTree, leafId),
-      );
-      if (!tab || tab.kind !== "terminal") return curr;
-      const newTree = removeLeaf(tab.paneTree, leafId);
-      if (newTree === null) {
-        if (curr.length <= 1) return curr;
-        const idx = curr.findIndex((x) => x.id === tab.id);
-        const next = curr.filter((x) => x.id !== tab.id);
-        setActiveId((active) =>
-          active === tab.id ? next[Math.max(0, idx - 1)].id : active,
-        );
-        didRemove = true;
-        return next;
-      }
-      const remaining = leafIds(newTree);
-      let newActive = tab.activeLeafId;
-      if (tab.activeLeafId === leafId) {
-        const sib = siblingLeafOf(tab.paneTree, leafId);
-        newActive = sib && remaining.includes(sib) ? sib : remaining[0];
-      }
-      didRemove = true;
-      return curr.map((x) =>
-        x.id === tab.id
-          ? { ...x, paneTree: newTree, activeLeafId: newActive }
-          : x,
-      );
-    });
-    if (didRemove) disposeSession(leafId);
-  }, []);
-
-  const closeActivePane = useCallback((tabId: number): boolean => {
-    let closedTab = false;
-    let removedLeaf: number | null = null;
-    setTabs((curr) => {
-      const t = curr.find((x) => x.id === tabId);
-      if (!t || t.kind !== "terminal") return curr;
-      const target = t.activeLeafId;
-      const newTree = removeLeaf(t.paneTree, target);
-      if (newTree === null) {
-        if (curr.length <= 1) return curr;
-        const idx = curr.findIndex((x) => x.id === tabId);
-        const next = curr.filter((x) => x.id !== tabId);
-        setActiveId((active) =>
-          active === tabId ? next[Math.max(0, idx - 1)].id : active,
-        );
-        closedTab = true;
-        removedLeaf = target;
-        return next;
-      }
-      const remaining = leafIds(newTree);
-      const sib = siblingLeafOf(t.paneTree, target);
-      const newActive =
-        sib && remaining.includes(sib) ? sib : remaining[0];
-      removedLeaf = target;
-      return curr.map((x) =>
-        x.id === tabId
-          ? { ...x, paneTree: newTree, activeLeafId: newActive }
-          : x,
-      );
-    });
-    if (removedLeaf !== null) disposeSession(removedLeaf);
-    return closedTab;
-  }, []);
-
-  const resetWorkspace = useCallback((cwd?: string) => {
-    const tabId = nextIdRef.current++;
-    const leafId = nextIdRef.current++;
-    let toDispose: number[] = [];
-    setTabs((curr) => {
-      toDispose = curr.flatMap((t) =>
-        t.kind === "terminal" ? leafIds(t.paneTree) : [],
-      );
-      return [
-        createTerminalTab({ tabId, leafId, title: "shell", cwd }),
-      ];
-    });
-    setActiveId(tabId);
-    for (const lid of toDispose) disposeSession(lid);
+  const resetWorkspace = useCallback(() => {
+    setTabs([]);
+    setActiveId(0);
   }, []);
 
   return {
     tabs,
     activeId,
     setActiveId,
-    newTab,
-    newPrivateTab,
     openFileTab,
     pinTab,
     newPreviewTab,
+    newHttpClientTab,
     newMarkdownTab,
     newHtmlPreviewTab,
+    newImageTab,
+    newPdfTab,
     openGitDiffTab,
     openCommitHistoryTab,
     openCommitFileDiffTab,
+    newPiTab,
     closeTab,
     updateTab,
     selectByIndex,
-    setLeafCwd,
-    focusPane,
-    focusNextPaneInTab,
-    splitActivePane,
-    closeActivePane,
-    closePaneByLeaf,
     resetWorkspace,
   };
 }

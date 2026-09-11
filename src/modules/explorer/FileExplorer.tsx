@@ -30,6 +30,7 @@ import { InlineInput } from "./InlineInput";
 import { copyToClipboard, revealInFinder } from "./lib/contextActions";
 import { fileIconUrl, folderIconUrl } from "./lib/iconResolver";
 import { COMPACT_CONTENT, COMPACT_ITEM } from "./lib/menuItemClass";
+import { PathIcon } from "./lib/PathIcon";
 import { useFileTree } from "./lib/useFileTree";
 import { useGlobalShortcuts } from "@/modules/shortcuts";
 
@@ -392,12 +393,9 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
             className="flex flex-1 items-center truncate text-xs font-medium text-foreground/80"
             title={rootPath}
           >
-            <img
-              src={folderIconUrl(basename(rootPath), false)}
-              alt=""
-              height={15}
-              width={15}
-              className="mx-1.5"
+            <PathIcon
+              url={folderIconUrl(basename(rootPath), false)}
+              className="mx-1.5 size-4"
             />
             {basename(rootPath)}
           </span>
@@ -465,14 +463,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(
                     style={{ paddingLeft: 6 }}
                   >
                     <span className="size-3.5 shrink-0" />
-                    <img
-                      src={
+                    <PathIcon
+                      url={
                         pendingAtRoot.kind === "dir"
                           ? folderIconUrl("", false)
                           : fileIconUrl("untitled")
                       }
-                      alt=""
-                      className="size-4 shrink-0 opacity-70"
+                      className="size-4 opacity-70"
                     />
                     <InlineInput
                       initial=""

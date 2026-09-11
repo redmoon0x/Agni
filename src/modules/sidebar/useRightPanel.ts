@@ -43,6 +43,20 @@ export function useRightPanel() {
     }
   }, []);
 
+  const openRightPanel = useCallback(() => {
+    const panel = rightPanelRef.current;
+    if (!panel || panel.getSize().asPercentage > 0) return;
+    panel.resize(`${rightPanelWidthRef.current}px`);
+    setRightPanelOpen(true);
+  }, []);
+
+  const closeRightPanel = useCallback(() => {
+    const panel = rightPanelRef.current;
+    if (!panel || panel.getSize().asPercentage <= 0) return;
+    panel.collapse();
+    setRightPanelOpen(false);
+  }, []);
+
   const handleRightPanelResize = useCallback((width: number) => {
     const open = width > 0;
     setRightPanelOpen((current) => (current === open ? current : open));
@@ -77,6 +91,8 @@ export function useRightPanel() {
     rightPanelRef,
     rightPanelOpen,
     toggleRightPanel,
+    openRightPanel,
+    closeRightPanel,
     handleRightPanelResize,
   };
 }

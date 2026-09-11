@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/command";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
+import { PathIcon } from "@/modules/explorer/lib/PathIcon";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   getBindingTokens,
@@ -254,11 +255,7 @@ export function CommandPalette({
                       onSelect={() => openFile(hit)}
                       className="text-[12.5px]"
                     >
-                      <img
-                        src={fileIconUrl(hit.name)}
-                        alt=""
-                        className="size-4 shrink-0"
-                      />
+                      <PathIcon url={fileIconUrl(hit.name)} className="size-4" />
                       <span className="min-w-0 flex-1 truncate">
                         {hit.name}
                       </span>

@@ -1,7 +1,7 @@
 import type { SearchTarget } from "@/modules/header";
 import type { ShortcutId } from "@/modules/shortcuts";
-import { MAX_PANES_PER_TAB, type Tab } from "@/modules/tabs";
-import { leafIds } from "@/modules/terminal";
+import { MAX_DOCK_PANES } from "@/modules/terminal-dock";
+import type { Tab } from "@/modules/tabs";
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
@@ -9,14 +9,12 @@ import {
   FileEditIcon,
   Folder01Icon,
   Globe02Icon,
-  IncognitoIcon,
   KeyboardIcon,
   LayoutTwoColumnIcon,
   LayoutTwoRowIcon,
   Search01Icon,
   Settings01Icon,
   SidebarLeftIcon,
-  
   TerminalIcon,
 } from "@hugeicons/core-free-icons";
 
@@ -50,14 +48,15 @@ export type CommandPaletteActionContext = {
   searchTarget: SearchTarget;
   explorerRoot: string | null;
   home: string | null;
-  openNewTab: () => void;
-  openNewPrivate: () => void;
+  dockOpen: boolean;
+  dockPaneCount: number;
   openFolder: () => void;
   openNewEditor: () => void;
   openNewPreview: () => void;
   closeActiveTabOrPane: () => void;
   nextTab: () => void;
   previousTab: () => void;
+  toggleDock: () => void;
   splitPaneRight: () => void;
   splitPaneDown: () => void;
   focusNextPane: () => void;
@@ -72,26 +71,13 @@ export type CommandPaletteActionContext = {
 export function createCommandPaletteActions(
   ctx: CommandPaletteActionContext,
 ): CommandPaletteAction[] {
-  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeId);
-  const activeTerminalTab =
-    activeTab?.kind === "terminal" ? activeTab : null;
-  const activePaneCount = activeTerminalTab
-    ? leafIds(activeTerminalTab.paneTree).length
-    : 0;
   const onlyOneTab = ctx.tabs.length < 2;
   const noWorkspaceRoot = !ctx.explorerRoot && !ctx.home;
-  const splitPaneDisabledReason = !activeTerminalTab
-    ? "No terminal tab"
-    : activePaneCount >= MAX_PANES_PER_TAB
-      ? "Pane limit"
-      : undefined;
-  const focusPaneDisabledReason = !activeTerminalTab
-    ? "No terminal tab"
-    : activePaneCount < 2
-      ? "Only one pane"
-      : undefined;
-  const closeDisabledReason =
-    onlyOneTab && activePaneCount < 2 ? "Last tab" : undefined;
+  const splitPaneDisabledReason =
+    ctx.dockPaneCount >= MAX_DOCK_PANES ? "Pane limit" : undefined;
+  const focusPaneDisabledReason =
+    !ctx.dockOpen || ctx.dockPaneCount < 2 ? "Only one pane" : undefined;
+  const closeDisabledReason = onlyOneTab ? "Last tab" : undefined;
 
   return [
     {
@@ -123,22 +109,13 @@ export function createCommandPaletteActions(
       run: ctx.openFolder,
     },
     {
-      id: "tab.new",
-      label: "New terminal",
-      group: "Tabs",
-      keywords: ["shell", "terminal", "new tab"],
+      id: "terminal.toggle",
+      label: ctx.dockOpen ? "Hide terminal panel" : "Show terminal panel",
+      group: "General",
+      keywords: ["shell", "terminal", "panel", "dock"],
       icon: TerminalIcon,
-      shortcutId: "tab.new",
-      run: ctx.openNewTab,
-    },
-    {
-      id: "tab.newPrivate",
-      label: "New private terminal",
-      group: "Tabs",
-      keywords: ["privacy", "private", "incognito", "hidden from ai"],
-      icon: IncognitoIcon,
-      shortcutId: "tab.newPrivate",
-      run: ctx.openNewPrivate,
+      shortcutId: "terminal.toggle",
+      run: ctx.toggleDock,
     },
     {
       id: "tab.newEditor",
@@ -192,7 +169,7 @@ export function createCommandPaletteActions(
     },
     {
       id: "pane.splitRight",
-      label: "Split pane right",
+      label: "Split terminal right",
       group: "Panes",
       keywords: ["terminal", "pane", "split", "right", "column"],
       icon: LayoutTwoColumnIcon,
@@ -202,7 +179,7 @@ export function createCommandPaletteActions(
     },
     {
       id: "pane.splitDown",
-      label: "Split pane down",
+      label: "Split terminal down",
       group: "Panes",
       keywords: ["terminal", "pane", "split", "down", "row"],
       icon: LayoutTwoRowIcon,
@@ -212,7 +189,7 @@ export function createCommandPaletteActions(
     },
     {
       id: "pane.focusNext",
-      label: "Focus next pane",
+      label: "Focus next terminal pane",
       group: "Panes",
       keywords: ["terminal", "pane", "focus", "next"],
       icon: ArrowRight01Icon,
@@ -222,7 +199,7 @@ export function createCommandPaletteActions(
     },
     {
       id: "pane.focusPrev",
-      label: "Focus previous pane",
+      label: "Focus previous terminal pane",
       group: "Panes",
       keywords: ["terminal", "pane", "focus", "previous"],
       icon: ArrowLeft01Icon,

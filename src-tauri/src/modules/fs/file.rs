@@ -13,6 +13,7 @@ use crate::modules::workspace::{resolve_path, WorkspaceEnv};
 const MAX_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 const MAX_CLIPBOARD_IMAGE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_BASE64_READ_BYTES: u64 = 25 * 1024 * 1024; // 25 MB, images/PDFs run larger than source files
 
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -79,6 +80,35 @@ pub fn fs_read_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<Rea
         Ok(content) => Ok(ReadResult::Text { content, size }),
         Err(_) => Ok(ReadResult::Binary { size }),
     }
+}
+
+/// Reads a file's raw bytes as base64, for rendering images/PDFs via data
+/// URLs. Distinct from `fs_read_file`, which only classifies binary files.
+#[derive(Serialize)]
+pub struct Base64ReadResult {
+    pub base64: String,
+    pub size: u64,
+}
+
+#[tauri::command]
+pub fn fs_read_file_base64(
+    path: String,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<Base64ReadResult, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    let p = resolve_path(&path, &workspace);
+    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+    let size = meta.len();
+    if size > MAX_BASE64_READ_BYTES {
+        return Err(format!(
+            "file is {size} bytes, exceeding the {MAX_BASE64_READ_BYTES} byte preview limit"
+        ));
+    }
+    let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+    Ok(Base64ReadResult {
+        base64: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+        size,
+    })
 }
 
 #[derive(Serialize, Clone)]

@@ -1,17 +1,18 @@
-export { TabBar } from "./TabBar";
 export {
-  MAX_PANES_PER_TAB,
-  useTabs,
-  type Tab,
-  type TerminalTab,
   type EditorTab,
-  type PreviewTab,
-  type MarkdownTab,
-  type HtmlPreviewTab,
+  type GitCommitFileDiffTab,
   type GitDiffTab,
   type GitHistoryTab,
-  type GitCommitFileDiffTab,
+  type HtmlPreviewTab,
+  type HttpClientTab,
+  type ImageTab,
+  type MarkdownTab,
+  type PdfTab,
+  type PreviewTab,
+  type Tab,
   type TabPatch,
+  useTabs,
 } from "./lib/useTabs";
-export { useWorkspaceCwd } from "./lib/useWorkspaceCwd";
 export { useWindowTitle } from "./lib/useWindowTitle";
+export { useWorkspaceCwd } from "./lib/useWorkspaceCwd";
+export { TabBar } from "./TabBar";

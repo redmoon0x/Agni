@@ -15,7 +15,6 @@ function dirname(path: string | null): string | null {
 type Params = {
   activeTab: Tab | undefined;
   tabs: Tab[];
-  activeTerminalLeafCwd: string | null;
   explorerRoot: string | null;
   launchCwd: string | null;
   launchCwdResolved: boolean;
@@ -36,7 +35,6 @@ type Params = {
 export function useSourceControlContext({
   activeTab,
   tabs,
-  activeTerminalLeafCwd,
   explorerRoot,
   launchCwd,
   launchCwdResolved,
@@ -49,9 +47,6 @@ export function useSourceControlContext({
     ? (launchCwd ?? home ?? null)
     : null;
   const sourceControlContextPath = (() => {
-    if (activeTab?.kind === "terminal") {
-      return activeTerminalLeafCwd ?? explorerRoot ?? workspaceFallbackPath;
-    }
     if (activeTab?.kind === "editor") return dirname(activeTab.path);
     if (activeTab?.kind === "git-diff") return activeTab.repoRoot;
     if (activeTab?.kind === "git-commit-file") return activeTab.repoRoot;

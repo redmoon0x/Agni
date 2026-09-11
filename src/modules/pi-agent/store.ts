@@ -5,6 +5,7 @@ import {
   INITIAL_PI_RPC_STATE,
   type PiConnectionStatus,
   type PiExtensionRequest,
+  type PiImageAttachment,
   type PiProcessEvent,
   type PiRpcState,
   type PiSessionEntry,
@@ -50,12 +51,15 @@ function handleProcessEvent(event: PiProcessEvent, eventGeneration: number) {
       rpc.success === true &&
       (rpc.command === "new_session" ||
         rpc.command === "set_model" ||
-        rpc.command === "switch_session")
+        rpc.command === "switch_session" ||
+        rpc.command === "fork" ||
+        rpc.command === "clone" ||
+        rpc.command === "set_session_name")
     ) {
       void syncPiState();
     }
     if (
-      rpc?.type === "agent_settled" ||
+      rpc?.type === "agent_end" ||
       rpc?.type === "compaction_end" ||
       (rpc?.type === "response" &&
         rpc.success === true &&
@@ -174,7 +178,10 @@ export async function restartPi(): Promise<void> {
   if (lastStart) await ensurePiStarted(lastStart.cwd, lastStart.workspace);
 }
 
-export async function promptPi(message: string): Promise<void> {
+export async function promptPi(
+  message: string,
+  images: PiImageAttachment[] = [],
+): Promise<void> {
   const trimmed = message.trim();
   if (!trimmed) return;
   const streaming = usePiStore.getState().session.isStreaming;
@@ -182,12 +189,44 @@ export async function promptPi(message: string): Promise<void> {
     id: requestId(),
     type: "prompt",
     message: trimmed,
+    ...(images.length ? { images } : {}),
     ...(streaming ? { streamingBehavior: "steer" } : {}),
+  });
+}
+
+export async function steerPi(
+  message: string,
+  images: PiImageAttachment[] = [],
+): Promise<void> {
+  await send({
+    id: requestId(),
+    type: "steer",
+    message: message.trim(),
+    ...(images.length ? { images } : {}),
+  });
+}
+
+export async function followUpPi(
+  message: string,
+  images: PiImageAttachment[] = [],
+): Promise<void> {
+  await send({
+    id: requestId(),
+    type: "follow_up",
+    message: message.trim(),
+    ...(images.length ? { images } : {}),
   });
 }
 
 export async function abortPi(): Promise<void> {
   await send({ id: requestId(), type: "abort" });
+}
+
+export async function abortPiRetry(): Promise<void> {
+  await send({ id: requestId(), type: "abort_retry" });
+  usePiStore.setState((state) => ({
+    session: { ...state.session, isRetrying: false },
+  }));
 }
 
 export async function setPiModel(provider: string, modelId: string) {
@@ -221,6 +260,20 @@ export async function setPiAutoRetry(enabled: boolean) {
   await send({ id: requestId(), type: "set_auto_retry", enabled });
 }
 
+export async function setPiSteeringMode(mode: "all" | "one-at-a-time") {
+  await send({ id: requestId(), type: "set_steering_mode", mode });
+  usePiStore.setState((state) => ({
+    session: { ...state.session, steeringMode: mode },
+  }));
+}
+
+export async function setPiFollowUpMode(mode: "all" | "one-at-a-time") {
+  await send({ id: requestId(), type: "set_follow_up_mode", mode });
+  usePiStore.setState((state) => ({
+    session: { ...state.session, followUpMode: mode },
+  }));
+}
+
 export async function listPiSessions(): Promise<PiSessionEntry[]> {
   const sessionFile = usePiStore.getState().session.sessionFile;
   if (!sessionFile) return [];
@@ -229,6 +282,26 @@ export async function listPiSessions(): Promise<PiSessionEntry[]> {
 
 export async function switchPiSession(path: string) {
   await send({ id: requestId(), type: "switch_session", sessionPath: path });
+}
+
+export async function loadPiForkMessages() {
+  await send({ id: requestId(), type: "get_fork_messages" });
+}
+
+export async function forkPiSession(entryId: string) {
+  await send({ id: requestId(), type: "fork", entryId });
+}
+
+export async function clonePiSession() {
+  await send({ id: requestId(), type: "clone" });
+}
+
+export async function setPiSessionName(name: string) {
+  await send({ id: requestId(), type: "set_session_name", name: name.trim() });
+}
+
+export async function exportPiSession() {
+  await send({ id: requestId(), type: "export_html" });
 }
 
 export async function respondToPiExtension(

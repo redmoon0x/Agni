@@ -7,6 +7,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
+import { PathIcon } from "@/modules/explorer/lib/PathIcon";
 
 type GrepHit = { path: string; rel: string; line: number; text: string };
 type GrepResponse = {
@@ -189,7 +190,7 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
                     className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-foreground/85"
                     title={group.path}
                   >
-                    <img src={url} alt="" className="size-3.5 shrink-0" />
+                    <PathIcon url={url} className="size-3.5" />
                     <span className="truncate">{group.rel}</span>
                     <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
                       {group.hits.length}

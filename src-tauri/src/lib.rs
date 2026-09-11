@@ -1,6 +1,6 @@
 pub mod modules;
 
-use modules::{agent, fs, git, pi, pick_folder, pty, shell, workspace};
+use modules::{agent, fs, git, http, pi, pick_folder, pty, shell, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
@@ -166,6 +166,7 @@ pub fn run() {
             fs::tree::list_subdirs,
             fs::tree::fs_read_dir,
             fs::file::fs_read_file,
+            fs::file::fs_read_file_base64,
             fs::file::fs_write_file,
             fs::file::fs_save_clipboard_image,
             fs::file::fs_stat,
@@ -180,6 +181,7 @@ pub fn run() {
             fs::search::fs_list_files,
             fs::grep::fs_grep,
             fs::grep::fs_glob,
+            http::http_request,
             git::commands::git_resolve_repo,
             git::commands::git_panel_snapshot,
             git::commands::git_status,

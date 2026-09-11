@@ -13,6 +13,15 @@ export type PiModel = {
   reasoning?: boolean;
 };
 
+export type PiQueueMode = "all" | "one-at-a-time";
+
+export type PiImageAttachment = {
+  type: "image";
+  name: string;
+  data: string;
+  mimeType: string;
+};
+
 export type PiContentBlock = {
   type?: string;
   text?: string;
@@ -25,6 +34,8 @@ export type PiMessage = {
   role: string;
   content: string | PiContentBlock[];
   timestamp?: number;
+  /** Monotonic arrival order assigned by the reducer for chronological rendering. */
+  sequence?: number;
 };
 
 export type PiToolActivity = {
@@ -33,6 +44,8 @@ export type PiToolActivity = {
   args: unknown;
   status: "running" | "done" | "error";
   output: string;
+  /** Monotonic arrival order assigned by the reducer for chronological rendering. */
+  sequence?: number;
 };
 
 export type PiExtensionRequest = {
@@ -46,6 +59,23 @@ export type PiExtensionRequest = {
   prefill?: string;
 };
 
+export type PiExtensionNotification = {
+  id: string;
+  message: string;
+  type: "info" | "warning" | "error";
+};
+
+export type PiExtensionWidget = {
+  key: string;
+  lines: string[];
+  placement: "aboveEditor" | "belowEditor";
+};
+
+export type PiForkMessage = {
+  entryId: string;
+  text: string;
+};
+
 export type PiSessionState = {
   model: PiModel | null;
   thinkingLevel: string;
@@ -55,6 +85,10 @@ export type PiSessionState = {
   sessionName?: string;
   sessionFile?: string;
   autoCompactionEnabled: boolean;
+  steeringMode: PiQueueMode;
+  followUpMode: PiQueueMode;
+  pendingMessageCount: number;
+  isRetrying: boolean;
 };
 
 export type PiCommandInfo = {
@@ -86,6 +120,13 @@ export type PiRpcState = {
   stats: PiSessionStats | null;
   session: PiSessionState;
   extensionRequest: PiExtensionRequest | null;
+  extensionNotification: PiExtensionNotification | null;
+  extensionStatuses: Record<string, string>;
+  extensionWidgets: PiExtensionWidget[];
+  extensionTitle: string | null;
+  extensionEditorText: { id: string; text: string } | null;
+  forkMessages: PiForkMessage[];
+  exportedHtmlPath: string | null;
   rpcError: string | null;
 };
 
@@ -108,7 +149,18 @@ export const INITIAL_PI_RPC_STATE: PiRpcState = {
     isStreaming: false,
     isCompacting: false,
     autoCompactionEnabled: true,
+    steeringMode: "one-at-a-time",
+    followUpMode: "one-at-a-time",
+    pendingMessageCount: 0,
+    isRetrying: false,
   },
   extensionRequest: null,
+  extensionNotification: null,
+  extensionStatuses: {},
+  extensionWidgets: [],
+  extensionTitle: null,
+  extensionEditorText: null,
+  forkMessages: [],
+  exportedHtmlPath: null,
   rpcError: null,
 };

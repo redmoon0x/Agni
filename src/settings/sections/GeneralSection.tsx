@@ -24,7 +24,6 @@ import {
   setAutostart,
   setEditorAutoSave,
   setEditorAutoSaveDelay,
-  setRestoreWindowState,
   setShowHidden,
   setTerminalFontFamily,
   setTerminalLetterSpacing,
@@ -68,7 +67,6 @@ export function GeneralSection() {
   const { mode, setMode } = useTheme();
 
   const autostart = usePreferencesStore((s) => s.autostart);
-  const restoreWindowState = usePreferencesStore((s) => s.restoreWindowState);
   const vimMode = usePreferencesStore((s) => s.vimMode);
   const editorAutoSave = usePreferencesStore((s) => s.editorAutoSave);
   const editorAutoSaveDelay = usePreferencesStore((s) => s.editorAutoSaveDelay);
@@ -332,26 +330,15 @@ export function GeneralSection() {
 
       <div className="flex flex-col gap-2">
         <Label>Startup</Label>
-        <div className="flex flex-col gap-2">
-          <SettingRow
-            title="Launch at login"
-            description="Open Agni automatically when you sign in."
-          >
-            <Switch
-              checked={autostart}
-              onCheckedChange={(v) => void onToggleAutostart(v)}
-            />
-          </SettingRow>
-          <SettingRow
-            title="Restore window position & size"
-            description="Reopen the main window where you left it. Applies on next launch."
-          >
-            <Switch
-              checked={restoreWindowState}
-              onCheckedChange={(v) => void setRestoreWindowState(v)}
-            />
-          </SettingRow>
-        </div>
+        <SettingRow
+          title="Launch at login"
+          description="Open Agni automatically when you sign in."
+        >
+          <Switch
+            checked={autostart}
+            onCheckedChange={(v) => void onToggleAutostart(v)}
+          />
+        </SettingRow>
       </div>
     </div>
   );

@@ -17,6 +17,7 @@ import {
 } from "./lib/contextActions";
 import { fileIconUrl, folderIconUrl } from "./lib/iconResolver";
 import { COMPACT_CONTENT, COMPACT_ITEM } from "./lib/menuItemClass";
+import { PathIcon } from "./lib/PathIcon";
 import type { useFileTree } from "./lib/useFileTree";
 
 type Tree = ReturnType<typeof useFileTree>;
@@ -86,7 +87,7 @@ function EntryRowImpl(props: EntryRowProps) {
           >
             <span className="size-3.5 shrink-0" />
             {iconUrl ? (
-              <img src={iconUrl} alt="" className="size-4 shrink-0" />
+              <PathIcon url={iconUrl} className="size-4" />
             ) : (
               <span className="size-4 shrink-0" />
             )}
@@ -122,7 +123,7 @@ function EntryRowImpl(props: EntryRowProps) {
               ) : null}
             </span>
             {iconUrl ? (
-              <img src={iconUrl} alt="" className="size-4 shrink-0" />
+              <PathIcon url={iconUrl} className="size-4" />
             ) : (
               <span className="size-4 shrink-0" />
             )}
@@ -237,10 +238,9 @@ export function PendingRow({ depth, kind, onCommit, onCancel }: PendingRowProps)
       style={{ paddingLeft: 6 + depth * 12 }}
     >
       <span className="size-3.5 shrink-0" />
-      <img
-        src={kind === "dir" ? folderIconUrl("", false) : fileIconUrl("untitled")}
-        alt=""
-        className="size-4 shrink-0 opacity-70"
+      <PathIcon
+        url={kind === "dir" ? folderIconUrl("", false) : fileIconUrl("untitled")}
+        className="size-4 opacity-70"
       />
       <InlineInput
         initial=""

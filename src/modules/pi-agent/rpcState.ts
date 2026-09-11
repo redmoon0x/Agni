@@ -2,6 +2,8 @@ import {
   INITIAL_PI_RPC_STATE,
   type PiContentBlock,
   type PiExtensionRequest,
+  type PiExtensionWidget,
+  type PiForkMessage,
   type PiMessage,
   type PiModel,
   type PiRpcState,
@@ -24,6 +26,16 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
+function isQueueMode(value: unknown): value is "all" | "one-at-a-time" {
+  return value === "all" || value === "one-at-a-time";
+}
+
+function asStringArray(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : null;
+}
+
 function isModel(value: unknown): value is PiModel {
   const model = asObject(value);
   return !!(
@@ -43,7 +55,18 @@ function isMessage(value: unknown): value is PiMessage {
   );
 }
 
+function isChatMessage(message: PiMessage): boolean {
+  return message.role === "user" || message.role === "assistant";
+}
+
 const MAX_MESSAGES = 500;
+
+let sequenceCounter = 0;
+
+function nextSequence(): number {
+  sequenceCounter += 1;
+  return sequenceCounter;
+}
 
 function upsertMessage(messages: PiMessage[], message: PiMessage): PiMessage[] {
   if (message.timestamp !== undefined) {
@@ -54,7 +77,7 @@ function upsertMessage(messages: PiMessage[], message: PiMessage): PiMessage[] {
     );
     if (index >= 0) {
       const next = [...messages];
-      next[index] = message;
+      next[index] = { ...message, sequence: next[index].sequence };
       return next;
     }
   }
@@ -63,11 +86,13 @@ function upsertMessage(messages: PiMessage[], message: PiMessage): PiMessage[] {
     const last = messages[lastIndex];
     if (last?.role === "assistant" && last.timestamp === undefined) {
       const next = [...messages];
-      next[lastIndex] = message;
+      next[lastIndex] = { ...message, sequence: next[lastIndex].sequence };
       return next;
     }
   }
-  return [...messages, message].slice(-MAX_MESSAGES);
+  return [...messages, { ...message, sequence: nextSequence() }].slice(
+    -MAX_MESSAGES,
+  );
 }
 
 function toolOutput(value: unknown): string {
@@ -95,11 +120,12 @@ function updateTool(
         args: update.args ?? null,
         status: update.status ?? "running",
         output: update.output ?? "",
+        sequence: nextSequence(),
       },
     ];
   }
   const next = [...tools];
-  next[index] = { ...next[index], ...update };
+  next[index] = { ...next[index], ...update, sequence: next[index].sequence };
   return next;
 }
 
@@ -129,6 +155,21 @@ function extensionRequest(message: JsonObject): PiExtensionRequest | null {
   };
 }
 
+function forkMessages(value: unknown): PiForkMessage[] | null {
+  if (!Array.isArray(value)) return null;
+  return value
+    .map(asObject)
+    .filter((message): message is JsonObject => !!message)
+    .map((message) => ({
+      entryId: asString(message.entryId),
+      text: asString(message.text),
+    }))
+    .filter(
+      (message): message is { entryId: string; text: string } =>
+        !!message.entryId && !!message.text,
+    );
+}
+
 export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
   const message = asObject(value);
   const type = asString(message?.type);
@@ -155,6 +196,14 @@ export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
           sessionName: asString(data.sessionName) ?? undefined,
           sessionFile: asString(data.sessionFile) ?? undefined,
           autoCompactionEnabled: data.autoCompactionEnabled !== false,
+          steeringMode: isQueueMode(data.steeringMode)
+            ? data.steeringMode
+            : "one-at-a-time",
+          followUpMode: isQueueMode(data.followUpMode)
+            ? data.followUpMode
+            : "one-at-a-time",
+          pendingMessageCount: asNumber(data.pendingMessageCount) ?? 0,
+          isRetrying: false,
         },
         rpcError: null,
       };
@@ -162,7 +211,11 @@ export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
     if (command === "get_messages" && Array.isArray(data?.messages)) {
       return {
         ...state,
-        messages: data.messages.filter(isMessage).slice(-MAX_MESSAGES),
+        messages: data.messages
+          .filter(isMessage)
+          .filter(isChatMessage)
+          .map((message) => ({ ...message, sequence: nextSequence() }))
+          .slice(-MAX_MESSAGES),
         tools: [],
         rpcError: null,
       };
@@ -197,10 +250,35 @@ export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
         rpcError: null,
       };
     }
+    if (command === "get_fork_messages") {
+      const messages = forkMessages(data?.messages);
+      return messages ? { ...state, forkMessages: messages, rpcError: null } : state;
+    }
+    if (command === "export_html" && data) {
+      const path = asString(data.path);
+      return path ? { ...state, exportedHtmlPath: path, rpcError: null } : state;
+    }
     if (command === "set_model" && isModel(message.data)) {
       return {
         ...state,
         session: { ...state.session, model: message.data },
+        rpcError: null,
+      };
+    }
+    if (
+      command === "new_session" ||
+      command === "switch_session" ||
+      command === "fork" ||
+      command === "clone"
+    ) {
+      return {
+        ...state,
+        extensionRequest: null,
+        extensionStatuses: {},
+        extensionWidgets: [],
+        extensionTitle: null,
+        extensionEditorText: null,
+        forkMessages: [],
         rpcError: null,
       };
     }
@@ -214,10 +292,17 @@ export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
       rpcError: null,
     };
   }
-  if (type === "agent_settled") {
+  if (type === "agent_end") {
     return {
       ...state,
-      session: { ...state.session, isStreaming: false },
+      session: {
+        ...state.session,
+        isStreaming: false,
+        isRetrying: message.willRetry === true,
+      },
+      // The turn is over; drop stale tool rows so they don't pile up below
+      // newer messages. The transcript is rebuilt from get_messages anyway.
+      tools: [],
     };
   }
   if (type === "compaction_start") {
@@ -232,8 +317,15 @@ export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
       session: { ...state.session, isCompacting: false },
     };
   }
+  if (type === "auto_retry_start") {
+    return { ...state, session: { ...state.session, isRetrying: true } };
+  }
+  if (type === "auto_retry_end") {
+    return { ...state, session: { ...state.session, isRetrying: false } };
+  }
   if (["message_start", "message_update", "message_end"].includes(type)) {
     if (!isMessage(message.message)) return state;
+    if (!isChatMessage(message.message)) return state;
     return {
       ...state,
       messages: upsertMessage(state.messages, message.message),
@@ -274,7 +366,64 @@ export function reducePiRpc(state: PiRpcState, value: unknown): PiRpcState {
   }
   if (type === "extension_ui_request") {
     const request = extensionRequest(message);
-    return request ? { ...state, extensionRequest: request } : state;
+    if (request) return { ...state, extensionRequest: request };
+    const id = asString(message.id);
+    const method = asString(message.method);
+    if (!id || !method) return state;
+    if (method === "notify") {
+      const notification = asString(message.message);
+      const notifyType = asString(message.notifyType);
+      return notification
+        ? {
+            ...state,
+            extensionNotification: {
+              id,
+              message: notification,
+              type:
+                notifyType === "warning" || notifyType === "error"
+                  ? notifyType
+                  : "info",
+            },
+          }
+        : state;
+    }
+    if (method === "setStatus") {
+      const key = asString(message.statusKey);
+      if (!key) return state;
+      const statuses = { ...state.extensionStatuses };
+      const text = asString(message.statusText);
+      if (text === null) delete statuses[key];
+      else statuses[key] = text;
+      return { ...state, extensionStatuses: statuses };
+    }
+    if (method === "setWidget") {
+      const key = asString(message.widgetKey);
+      const lines = asStringArray(message.widgetLines);
+      if (!key) return state;
+      const widgets = state.extensionWidgets.filter((widget) => widget.key !== key);
+      if (lines) {
+        const widget: PiExtensionWidget = {
+          key,
+          lines,
+          placement:
+            message.widgetPlacement === "aboveEditor"
+              ? "aboveEditor"
+              : "belowEditor",
+        };
+        widgets.push(widget);
+      }
+      return { ...state, extensionWidgets: widgets };
+    }
+    if (method === "setTitle") {
+      return { ...state, extensionTitle: asString(message.title) };
+    }
+    if (method === "set_editor_text") {
+      const text = asString(message.text);
+      return text === null
+        ? state
+        : { ...state, extensionEditorText: { id, text } };
+    }
+    return state;
   }
   if (type === "extension_error") {
     return {

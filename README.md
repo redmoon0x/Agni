@@ -12,7 +12,11 @@
 
 ---
 
-**Agni** is a de-bloated fork of [Terax](https://github.com/crynta/terax-ai), a Tauri 2 + Rust terminal emulator. We stripped out all built-in AI (API keys, cloud providers, chat panel, auto-complete, agents) and kept the core: native PTY, WebGL terminal, code editor, file explorer, git, and preview. About 3-4 MB on disk. It detects CLI coding agents (Claude Code, pi, Codex, etc.) running inside the terminal and notifies you when they need attention. Native PTY backend with a WebGL renderer, plus a code editor, file explorer, source control with git graph, and web preview. Detects CLI coding agents (Claude Code, pi, Codex, etc.) running in your terminal — shows a notification bell and tab indicators when they need attention.
+**Agni** is a de-bloated fork of [Terax](https://github.com/crynta/terax-ai), a Tauri 2 + Rust terminal emulator. We stripped out all built-in AI (API keys, cloud providers, chat panel, auto-complete, agents) and kept the core: native PTY, WebGL terminal, code editor, file explorer, git, and preview. About 3-4 MB on disk. It detects CLI coding agents (Claude Code, pi, Codex, etc.) running in your terminal and shows a notification bell and tab indicators when they need attention.
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="Agni screenshot" width="800" />
+</p>
 
 ## Features
 
@@ -34,7 +38,7 @@
 - Commit search and filter
 
 ### File explorer
-- Catppuccin icon theme
+- Monochrome, theme-tinted file/folder icons that match whatever theme is active instead of a fixed palette
 - Fuzzy search, keyboard navigation, inline rename, context actions
 
 ### Web preview

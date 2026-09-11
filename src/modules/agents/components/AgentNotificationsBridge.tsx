@@ -1,44 +1,38 @@
-import type { Tab } from "@/modules/tabs";
+import { PI_TERMINAL_LEAF_ID } from "@/modules/pi-agent";
 import { hasLeaf, leafIdForPty } from "@/modules/terminal";
+import type { PaneNode } from "@/modules/terminal/lib/panes";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import { maybeTriggerManagedReview } from "../lib/review";
 import { routeAgentNotification } from "../lib/route";
-import type { AgentSession, AgentSignal } from "../lib/types";
+import type { AgentSession, AgentSignal, AgentSurface } from "../lib/types";
 import { useWindowFocus } from "../lib/useWindowFocus";
 import { useAgentStore } from "../store/agentStore";
 import { useManagedAgentsStore } from "../store/managedAgentsStore";
 
-type Activate = (tabId: number, leafId: number) => void;
-type OnAgentStarted = (tabId: number, leafId: number, agent: string) => void;
-type OnAgentDone = (tabId: number) => void;
+type Activate = (surface: AgentSurface, leafId: number) => void;
 type Ctx = {
-  tabs: Tab[];
-  activeId: number;
+  dockTree: PaneNode;
+  dockOpen: boolean;
+  dockActiveLeafId: number;
+  /** Pi panel is open and showing its terminal mode. */
+  piPanelVisible: boolean;
   focused: boolean;
   onActivate: Activate;
-  onAgentStarted: OnAgentStarted;
-  onAgentDone: OnAgentDone;
 };
 
-function tabInfo(
-  tabs: Tab[],
-  leafId: number,
-): { tabId: number; title: string } | null {
-  for (const t of tabs) {
-    if (t.kind === "terminal" && hasLeaf(t.paneTree, leafId)) {
-      return { tabId: t.id, title: t.title };
-    }
-  }
+function resolveSurface(dockTree: PaneNode, leafId: number): AgentSurface | null {
+  if (leafId === PI_TERMINAL_LEAF_ID) return "pi-panel";
+  if (hasLeaf(dockTree, leafId)) return "dock";
   return null;
 }
 
-function route(
-  session: AgentSession,
-  kind: "attention" | "finished",
-  ctx: Ctx,
-): void {
-  const info = tabInfo(ctx.tabs, session.leafId);
+function isSurfaceVisible(ctx: Ctx, surface: AgentSurface, leafId: number): boolean {
+  if (surface === "dock") return ctx.dockOpen && ctx.dockActiveLeafId === leafId;
+  return ctx.piPanelVisible;
+}
+
+function route(session: AgentSession, kind: "attention" | "finished", ctx: Ctx): void {
   const heading =
     kind === "attention"
       ? `${session.agent} needs your input`
@@ -49,14 +43,13 @@ function route(
     agent: session.agent,
     kind,
     title: heading,
-    body: info?.title,
     focused: ctx.focused,
-    visible: ctx.activeId === session.tabId,
+    visible: isSurfaceVisible(ctx, session.surface, session.leafId),
     // Stop fires every turn, so finished only updates the bell; attention toasts.
     allowToast: kind === "attention",
-    tabId: session.tabId,
+    surface: session.surface,
     leafId: session.leafId,
-    onActivate: () => ctx.onActivate(session.tabId, session.leafId),
+    onActivate: () => ctx.onActivate(session.surface, session.leafId),
   });
 }
 
@@ -67,10 +60,9 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
 
   switch (sig.kind) {
     case "started": {
-      const info = tabInfo(ctx.tabs, leafId);
-      if (!info) return;
-      store.start(leafId, info.tabId, sig.agent ?? "agent");
-      ctx.onAgentStarted(info.tabId, leafId, sig.agent ?? "agent");
+      const surface = resolveSurface(ctx.dockTree, leafId);
+      if (!surface) return;
+      store.start(leafId, surface, sig.agent ?? "agent");
       return;
     }
     case "working":
@@ -90,44 +82,42 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       return;
     }
     case "exited": {
-      const tabId = store.sessions[leafId]?.tabId ?? 0;
       store.finish(leafId);
       useManagedAgentsStore.getState().remove(leafId);
-      if (tabId) ctx.onAgentDone(tabId);
       return;
     }
   }
 }
 
 export function AgentNotificationsBridge({
-  tabs,
-  activeId,
+  dockTree,
+  dockOpen,
+  dockActiveLeafId,
+  piPanelVisible,
   onActivate,
-  onAgentStarted,
-  onAgentDone,
 }: {
-  tabs: Tab[];
-  activeId: number;
+  dockTree: PaneNode;
+  dockOpen: boolean;
+  dockActiveLeafId: number;
+  piPanelVisible: boolean;
   onActivate: Activate;
-  onAgentStarted: OnAgentStarted;
-  onAgentDone: OnAgentDone;
 }) {
   const focused = useWindowFocus();
   const ctxRef = useRef<Ctx>({
-    tabs,
-    activeId,
+    dockTree,
+    dockOpen,
+    dockActiveLeafId,
+    piPanelVisible,
     focused,
     onActivate,
-    onAgentStarted,
-    onAgentDone,
   });
   ctxRef.current = {
-    tabs,
-    activeId,
+    dockTree,
+    dockOpen,
+    dockActiveLeafId,
+    piPanelVisible,
     focused,
     onActivate,
-    onAgentStarted,
-    onAgentDone,
   };
 
   useEffect(() => {

@@ -1,22 +1,3 @@
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { WindowControls } from "@/components/WindowControls";
-import { IS_MAC, KEY_SEP, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
-import { usePreferencesStore } from "@/modules/settings/preferences";
-import {
-  getBindingTokens,
-  SHORTCUTS,
-  type ShortcutId,
-} from "@/modules/shortcuts/shortcuts";
-import type { Tab } from "@/modules/tabs";
-import { TabBar } from "@/modules/tabs";
-import { NotificationBell } from "@/modules/agents";
-import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
 import {
   Folder01Icon,
   GridViewIcon,
@@ -26,7 +7,26 @@ import {
   SidebarLeftIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { WindowControls } from "@/components/WindowControls";
+import { IS_MAC, KEY_SEP, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
+import { NotificationBell } from "@/modules/agents";
+import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import {
+  getBindingTokens,
+  SHORTCUTS,
+  type ShortcutId,
+} from "@/modules/shortcuts/shortcuts";
+import type { Tab } from "@/modules/tabs";
+import { TabBar } from "@/modules/tabs";
 import {
   SearchInline,
   type SearchInlineHandle,
@@ -37,23 +37,21 @@ type Props = {
   tabs: Tab[];
   activeId: number;
   onSelect: (id: number) => void;
-  onNew: () => void;
-  onNewPrivate: () => void;
   onNewPreview: () => void;
   onNewEditor: () => void;
   onNewGitGraph: () => void;
+  onNewHttpClient: () => void;
+  onNewPi: () => void;
   onClose: (id: number) => void;
   /** Promote a preview (transient) tab to persistent. */
   onPin: (id: number) => void;
-  /** Set a terminal tab's custom label; empty string resets to default. */
-  onRename: (id: number, title: string) => void;
   onToggleSidebar: () => void;
   onTogglePiPanel: () => void;
   piPanelOpen: boolean;
-  onSplit: (dir: "row" | "col") => void;
-  /** Active tab is a terminal and below the per-tab pane cap. */
-  canSplit: boolean;
-  onActivateAgent: (tabId: number, leafId: number) => void;
+  onSplitDock: (dir: "row" | "col") => void;
+  /** Dock is below the pane cap. */
+  canSplitDock: boolean;
+  onActivateAgent: (surface: "dock" | "pi-panel", leafId: number) => void;
   onOpenFolder: () => void;
   onOpenSettings: () => void;
   searchTarget: SearchTarget;
@@ -66,19 +64,18 @@ export function Header({
   tabs,
   activeId,
   onSelect,
-  onNew,
-  onNewPrivate,
   onNewPreview,
   onNewEditor,
   onNewGitGraph,
+  onNewHttpClient,
+  onNewPi,
   onClose,
   onPin,
-  onRename,
   onToggleSidebar,
   onTogglePiPanel,
   piPanelOpen,
-  onSplit,
-  canSplit,
+  onSplitDock,
+  canSplitDock,
   onActivateAgent,
   onOpenFolder,
   onOpenSettings,
@@ -175,13 +172,13 @@ export function Header({
               size="icon-sm"
               className="shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
               title="Split terminal"
-              disabled={!canSplit}
+              disabled={!canSplitDock}
             >
               <HugeiconsIcon icon={GridViewIcon} size={16} strokeWidth={1.75} />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-44">
-            <DropdownMenuItem onSelect={() => onSplit("row")}>
+            <DropdownMenuItem onSelect={() => onSplitDock("row")}>
               <HugeiconsIcon
                 icon={LayoutTwoColumnIcon}
                 size={14}
@@ -194,7 +191,7 @@ export function Header({
                 </span>
               )}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onSplit("col")}>
+            <DropdownMenuItem onSelect={() => onSplitDock("col")}>
               <HugeiconsIcon
                 icon={LayoutTwoRowIcon}
                 size={14}
@@ -225,14 +222,13 @@ export function Header({
           tabs={tabs}
           activeId={activeId}
           onSelect={onSelect}
-          onNew={onNew}
-          onNewPrivate={onNewPrivate}
           onNewPreview={onNewPreview}
           onNewEditor={onNewEditor}
           onNewGitGraph={onNewGitGraph}
+          onNewHttpClient={onNewHttpClient}
+          onNewPi={onNewPi}
           onClose={onClose}
           onPin={onPin}
-          onRename={onRename}
           compact={compact}
         />
         <div data-tauri-drag-region className="h-full min-w-2 flex-1" />

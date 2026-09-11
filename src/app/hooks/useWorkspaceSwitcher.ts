@@ -12,7 +12,9 @@ type Params = {
   tabsRef: RefObject<Tab[]>;
   workspaceEnv: WorkspaceEnv;
   setWorkspaceEnv: (env: WorkspaceEnv) => void;
-  resetWorkspace: (home?: string) => void;
+  resetWorkspace: () => void;
+  /** Reset the terminal dock's pane tree to a single fresh pane at `cwd`. */
+  resetDock: (cwd?: string) => void;
   /** Dispose live sessions and clear App-owned pane/handle ref maps. */
   clearWorkspaceState: () => void;
 };
@@ -20,13 +22,14 @@ type Params = {
 /**
  * Owns the resolved home / launch cwd and the local⇄WSL workspace switch. The
  * switch tears down live sessions (via clearWorkspaceState), re-authorizes the
- * new home, and resets the tab workspace.
+ * new home, and resets the tab workspace and terminal dock.
  */
 export function useWorkspaceSwitcher({
   tabsRef,
   workspaceEnv,
   setWorkspaceEnv,
   resetWorkspace,
+  resetDock,
   clearWorkspaceState,
 }: Params) {
   const [home, setHome] = useState<string | null>(null);
@@ -95,12 +98,14 @@ export function useWorkspaceSwitcher({
           // Non-fatal — git panel will surface "not authorized" if needed.
         }
       }
-      resetWorkspace(nextHome ?? undefined);
+      resetWorkspace();
+      resetDock(nextHome ?? undefined);
     },
     [
       workspaceEnv,
       setWorkspaceEnv,
       resetWorkspace,
+      resetDock,
       tabsRef,
       clearWorkspaceState,
     ],

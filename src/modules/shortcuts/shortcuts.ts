@@ -6,9 +6,8 @@ import { IS_MAC, MOD_PROP } from "@/lib/platform";
 
 export type ShortcutId =
   | "commandPalette.open"
-  | "tab.new"
-  | "tab.newPrivate"
   | "tab.newPreview"
+  | "tab.newHttpClient"
   | "tab.newEditor"
   | "tab.close"
   | "tab.next"
@@ -20,6 +19,7 @@ export type ShortcutId =
   | "pane.focusPrev"
   | "pane.source"
   | "terminal.clear"
+  | "terminal.toggle"
   | "search.focus"
   | "explorer.search"
   | "explorer.focus"
@@ -78,22 +78,16 @@ export const SHORTCUTS: Shortcut[] = [
     defaultBindings: [{ [MOD_PROP]: true, key: "k" }],
   },
   {
-    id: "tab.new",
-    label: "New tab",
-    group: "Tabs",
-    defaultBindings: [{ [MOD_PROP]: true, key: "t" }],
-  },
-  {
-    id: "tab.newPrivate",
-    label: "New private terminal",
-    group: "Tabs",
-    defaultBindings: [{ [MOD_PROP]: true, key: "r" }],
-  },
-  {
     id: "tab.newPreview",
     label: "New preview tab",
     group: "Tabs",
     defaultBindings: [{ [MOD_PROP]: true, key: "p" }],
+  },
+  {
+    id: "tab.newHttpClient",
+    label: "New HTTP client tab",
+    group: "Tabs",
+    defaultBindings: [{ [MOD_PROP]: true, key: "h" }],
   },
   {
     id: "tab.newEditor",
@@ -130,7 +124,7 @@ export const SHORTCUTS: Shortcut[] = [
     label: "Focus previous pane",
     group: "Panes",
     defaultBindings: [{ [MOD_PROP]: true, key: "[" }],
-  },  
+  },
   {
     id: "pane.source",
     label: "Toggle source panel",
@@ -145,6 +139,12 @@ export const SHORTCUTS: Shortcut[] = [
     // macOS — on other platforms Ctrl+K is readline's kill-line, so we leave it
     // unbound and let users assign their own in settings.
     defaultBindings: IS_MAC ? [{ meta: true, key: "k" }] : [],
+  },
+  {
+    id: "terminal.toggle",
+    label: "Toggle terminal panel",
+    group: "Terminal",
+    defaultBindings: [{ ctrl: true, key: "`" }],
   },
   {
     id: "tab.next",
@@ -261,7 +261,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
 export function matchBinding(
   e: KeyboardEvent,
   binding: KeyBinding,
-  id?: ShortcutId
+  id?: ShortcutId,
 ): boolean {
   const eventKey = e.key.toLowerCase();
   const bindingKey = binding.key.toLowerCase();

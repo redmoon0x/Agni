@@ -27,6 +27,7 @@ import { usePreferencesStore } from "@/modules/settings/preferences";
 import { fileIconUrl } from "./lib/iconResolver";
 import { copyToClipboard, revealInFinder } from "./lib/contextActions";
 import { COMPACT_CONTENT, COMPACT_ITEM } from "./lib/menuItemClass";
+import { PathIcon } from "./lib/PathIcon";
 import { cn } from "@/lib/utils";
 
 type SearchHit = {
@@ -257,7 +258,7 @@ export const ExplorerSearch = forwardRef<ExplorerSearchHandle, Props>(function E
                         title={hit.path}
                       >
                         {url ? (
-                          <img src={url} alt="" className="size-3.5 shrink-0" />
+                          <PathIcon url={url} className="size-3.5" />
                         ) : (
                           <HugeiconsIcon
                             icon={Folder01Icon}

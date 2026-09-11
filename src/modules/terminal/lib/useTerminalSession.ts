@@ -116,6 +116,14 @@ export function clearFocusedTerminal(): boolean {
   return false;
 }
 
+/** Clear the scrollback and screen of a specific pane, regardless of focus. */
+export function clearSession(leafId: number): boolean {
+  const slot = getSlotForLeaf(leafId);
+  if (!slot) return false;
+  slot.term.clear();
+  return true;
+}
+
 export function leafIdForPty(ptyId: number): number | null {
   for (const [leafId, s] of sessions) {
     if (s.pty?.id === ptyId) return leafId;

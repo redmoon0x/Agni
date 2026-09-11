@@ -1,3 +1,5 @@
+import type { SearchAddon } from "@xterm/addon-search";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -9,15 +11,15 @@ import { getLaunchDir } from "@/lib/launchDir";
 import { native } from "@/lib/native";
 import { quoteShellArg } from "@/lib/shellQuote";
 import { useZoom } from "@/lib/useZoom";
-import { AgentNotificationsBridge } from "@/modules/agents";
+import { AgentNotificationsBridge, type AgentSurface } from "@/modules/agents";
 import {
   CommandPalette,
   createCommandPaletteActions,
 } from "@/modules/command-palette";
 import {
+  type EditorPaneHandle,
   NewEditorDialog,
   useEditorFileSync,
-  type EditorPaneHandle,
 } from "@/modules/editor";
 import { FileExplorer, type FileExplorerHandle } from "@/modules/explorer";
 import type { GitHistorySearchHandle } from "@/modules/git-history";
@@ -26,22 +28,28 @@ import {
   type SearchInlineHandle,
   type SearchTarget,
 } from "@/modules/header";
-import type { PreviewPaneHandle } from "@/modules/preview";
-import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
-import { PiPanel } from "@/modules/pi-agent";
-import { SearchPanel } from "@/modules/search";
 import {
-  ShortcutsDialog,
-  useGlobalShortcuts,
+  PI_TERMINAL_LEAF_ID,
+  PiPanel,
+  usePiPanelModeStore,
+} from "@/modules/pi-agent";
+import type { PreviewPaneHandle } from "@/modules/preview";
+import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
+import { SearchPanel } from "@/modules/search";
+import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
+import { setLastProjectRoot } from "@/modules/settings/store";
+import {
   type ShortcutHandlers,
   type ShortcutId,
+  ShortcutsDialog,
+  useGlobalShortcuts,
 } from "@/modules/shortcuts";
 import {
-  SidebarRail,
   RIGHT_PANEL_MAX_WIDTH,
   RIGHT_PANEL_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SidebarRail,
   useRightPanel,
   useSidebarPanel,
 } from "@/modules/sidebar";
@@ -50,91 +58,65 @@ import {
   useSourceControlContext,
 } from "@/modules/source-control";
 import { StatusBar } from "@/modules/statusbar";
-import {
-  MAX_PANES_PER_TAB,
-  useTabs,
-  useWindowTitle,
-  useWorkspaceCwd,
-} from "@/modules/tabs";
+import { useTabs, useWindowTitle, useWorkspaceCwd } from "@/modules/tabs";
 import {
   clearFocusedTerminal,
+  clearSession,
   disposeSession,
-  findLeafCwd,
-  hasLeaf,
+  leafHasForegroundProcess,
   leafIds,
   respawnSession,
   type TerminalPaneHandle,
   useTerminalFileDrop,
+  writeToSession,
 } from "@/modules/terminal";
+import {
+  MAX_DOCK_PANES,
+  TerminalDockHeader,
+  TerminalDockView,
+  useTerminalDock,
+  useTerminalDockPanel,
+} from "@/modules/terminal-dock";
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore } from "@/modules/workspace";
-import type { SearchAddon } from "@xterm/addon-search";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CloseDialogs } from "./components/CloseDialogs";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { useTabCloseGuards } from "./hooks/useTabCloseGuards";
 import { useWorkspaceSwitcher } from "./hooks/useWorkspaceSwitcher";
-
-function agentDisplayName(agent: string): string {
-  switch (agent.toLowerCase()) {
-    case "claude":
-    case "claudecode":
-    case "claude-code":
-      return "Claude Code";
-    case "codex":
-      return "Codex";
-    case "gemini":
-      return "Gemini";
-    case "opencode":
-    case "open-code":
-      return "OpenCode";
-    case "pi":
-      return "Pi";
-    case "agy":
-      return "Agy";
-    default:
-      return agent;
-  }
-}
 
 export default function App() {
   const {
     tabs,
     activeId,
     setActiveId,
-    newTab,
-    newPrivateTab,
     openFileTab,
     pinTab,
     newPreviewTab,
+    newHttpClientTab,
     newMarkdownTab,
     newHtmlPreviewTab,
+    newImageTab,
+    newPdfTab,
     openGitDiffTab,
     openCommitHistoryTab,
     openCommitFileDiffTab,
+    newPiTab,
     closeTab,
     updateTab,
     selectByIndex,
-    setLeafCwd,
-    focusPane,
-    focusNextPaneInTab,
-    splitActivePane,
-    closeActivePane,
-    closePaneByLeaf,
     resetWorkspace,
-  } = useTabs(getLaunchDir() ? { cwd: getLaunchDir() } : undefined);
+  } = useTabs();
+
+  const dock = useTerminalDock(getLaunchDir() ?? undefined);
+  const { dockRef, dockOpen, toggleDock, openDock, handleDockResize } =
+    useTerminalDockPanel(true);
+  const piPanelMode = usePiPanelModeStore((s) => s.mode);
 
   // Mirror `tabs` into a ref so callbacks scheduled with `setTimeout`
   // (e.g. cdInNewTab) read the latest pane state instead of a stale closure.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
-
-  const activeTerminalTab = useMemo(() => {
-    const t = tabs.find((x) => x.id === activeId);
-    return t && t.kind === "terminal" ? t : null;
-  }, [tabs, activeId]);
-  const activeLeafId = activeTerminalTab?.activeLeafId ?? null;
 
   const searchAddons = useRef<Map<number, SearchAddon>>(new Map());
   const [activeSearchAddon, setActiveSearchAddon] =
@@ -151,12 +133,13 @@ export default function App() {
   useTerminalFileDrop();
   const explorerRef = useRef<FileExplorerHandle>(null);
 
-  // Drives session disposal off the pane tree, not React lifecycles --
+  // Drives session disposal off the dock's pane tree, not React lifecycles --
   // split/unsplit re-mount components but the leaf is still live.
   const liveLeavesRef = useRef<Set<number>>(new Set());
 
   const clearWorkspaceState = useCallback(() => {
     for (const id of liveLeavesRef.current) disposeSession(id);
+    disposeSession(PI_TERMINAL_LEAF_ID);
     searchAddons.current.clear();
     terminalRefs.current.clear();
     editorRefs.current.clear();
@@ -173,6 +156,7 @@ export default function App() {
       workspaceEnv,
       setWorkspaceEnv,
       resetWorkspace,
+      resetDock: dock.resetDock,
       clearWorkspaceState,
     });
 
@@ -190,44 +174,75 @@ export default function App() {
     rightPanelRef,
     rightPanelOpen,
     toggleRightPanel,
+    openRightPanel,
+    closeRightPanel,
     handleRightPanelResize,
   } = useRightPanel();
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [pendingDockPaneClose, setPendingDockPaneClose] = useState<
+    number | null
+  >(null);
 
   const activeTab = tabs.find((t) => t.id === activeId);
-  const isTerminalTab = activeTab?.kind === "terminal";
   const isEditorTab = activeTab?.kind === "editor";
   const isGitHistoryTab = activeTab?.kind === "git-history";
+  // Pi has a single global session -- only ever one live surface for it, so
+  // opening it as a full tab suppresses (and reclaims focus from) the side panel.
+  const piTab = tabs.find((t) => t.kind === "pi");
+
+  const onNewPi = useCallback(() => {
+    closeRightPanel();
+    newPiTab();
+  }, [closeRightPanel, newPiTab]);
+
+  const onTogglePiPanel = useCallback(() => {
+    if (piTab) {
+      setActiveId(piTab.id);
+      return;
+    }
+    toggleRightPanel();
+  }, [piTab, setActiveId, toggleRightPanel]);
 
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
 
-  const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd(
-    activeTab,
-    tabs,
-    launchCwd ?? home,
-  );
+  const { explorerRoot } = useWorkspaceCwd(dock.activeCwd, launchCwd ?? home);
 
   useWindowTitle(activeTab, explorerRoot);
 
+  // Remember the last project root so relaunching without an explicit CLI
+  // dir (Start Menu, Dock, taskbar) resumes here instead of at home.
   useEffect(() => {
-    setActiveSearchAddon(
-      activeLeafId !== null
-        ? (searchAddons.current.get(activeLeafId) ?? null)
-        : null,
-    );
+    if (explorerRoot && explorerRoot !== home) void setLastProjectRoot(explorerRoot);
+  }, [explorerRoot, home]);
+
+  useEffect(() => {
+    setActiveSearchAddon(searchAddons.current.get(dock.activeLeafId) ?? null);
     setActiveEditorHandle(editorRefs.current.get(activeId) ?? null);
-  }, [activeId, activeLeafId]);
+  }, [activeId, dock.activeLeafId]);
+
+  // An annotation draft from a web preview should surface in the Pi chat
+  // composer: open the right panel in chat mode when one is staged.
+  useEffect(
+    () =>
+      usePreviewAnnotateDraftStore.subscribe((state) => {
+        if (state.pending) {
+          openRightPanel();
+          usePiPanelModeStore.getState().setMode("chat");
+        }
+      }),
+    [openRightPanel],
+  );
 
   const handleSearchReady = useCallback(
     (leafId: number, addon: SearchAddon) => {
       searchAddons.current.set(leafId, addon);
-      if (leafId === activeLeafId) setActiveSearchAddon(addon);
+      if (leafId === dock.activeLeafId) setActiveSearchAddon(addon);
     },
-    [activeLeafId],
+    [dock.activeLeafId],
   );
 
   const disposeTab = useCallback(
@@ -241,25 +256,38 @@ export default function App() {
 
   const {
     pendingCloseTab,
-    pendingTerminalCloseTab,
     pendingDeleteTabs,
     handleClose,
     confirmClose,
     cancelClose,
-    confirmTerminalClose,
-    cancelTerminalClose,
     confirmDeleteClose,
     cancelDeleteClose,
     handlePathDeleted,
   } = useTabCloseGuards({ tabs, disposeTab });
 
-  useEffect(() => {
-    const live = new Set<number>();
-    for (const t of tabs) {
-      if (t.kind === "terminal") {
-        for (const id of leafIds(t.paneTree)) live.add(id);
+  const closeDockPaneGuarded = useCallback(
+    async (leafId: number) => {
+      const running = await leafHasForegroundProcess(leafId);
+      if (running) {
+        setPendingDockPaneClose(leafId);
+        return;
       }
-    }
+      dock.closePane(leafId);
+    },
+    [dock],
+  );
+
+  const confirmDockPaneClose = useCallback(() => {
+    if (pendingDockPaneClose !== null) dock.closePane(pendingDockPaneClose);
+    setPendingDockPaneClose(null);
+  }, [pendingDockPaneClose, dock]);
+
+  const cancelDockPaneClose = useCallback(() => {
+    setPendingDockPaneClose(null);
+  }, []);
+
+  useEffect(() => {
+    const live = new Set(leafIds(dock.tree));
     for (const id of liveLeavesRef.current) {
       if (!live.has(id)) disposeSession(id);
     }
@@ -268,7 +296,7 @@ export default function App() {
       if (!live.has(k)) terminalRefs.current.delete(k);
     for (const k of [...searchAddons.current.keys()])
       if (!live.has(k)) searchAddons.current.delete(k);
-  }, [tabs]);
+  }, [dock.tree]);
 
   const cycleTab = useCallback(
     (delta: 1 | -1) => {
@@ -280,45 +308,44 @@ export default function App() {
     [tabs, activeId, setActiveId],
   );
 
-  const openNewTab = useCallback(() => {
-    newTab(inheritedCwdForNewTab());
-  }, [newTab, inheritedCwdForNewTab]);
-
-  const openNewPrivateTab = useCallback(() => {
-    newPrivateTab(inheritedCwdForNewTab());
-  }, [newPrivateTab, inheritedCwdForNewTab]);
-
   const sendCd = useCallback(
     (path: string) => {
-      if (activeLeafId === null) return;
-      const term = terminalRefs.current.get(activeLeafId);
-      if (!term) return;
-      term.write(`cd ${quoteShellArg(path)}\r`);
-      term.focus();
+      openDock();
+      writeToSession(dock.activeLeafId, `cd ${quoteShellArg(path)}\r`);
+      terminalRefs.current.get(dock.activeLeafId)?.focus();
     },
-    [activeLeafId],
+    [dock.activeLeafId, openDock],
   );
 
   const cdInNewTab = useCallback(
     (path: string) => {
-      const tabId = newTab(path);
+      openDock();
+      const leafId =
+        dock.paneCount < MAX_DOCK_PANES
+          ? dock.splitActive("row")
+          : dock.activeLeafId;
+      if (leafId === null) return;
       setTimeout(() => {
-        const tab = tabsRef.current.find((x) => x.id === tabId);
-        if (!tab || tab.kind !== "terminal") return;
-        const t = terminalRefs.current.get(tab.activeLeafId);
-        if (!t) return;
-        t.write(`cd ${quoteShellArg(path)}\r`);
-        t.focus();
+        writeToSession(leafId, `cd ${quoteShellArg(path)}\r`);
+        terminalRefs.current.get(leafId)?.focus();
       }, 80);
     },
-    [newTab],
+    [dock, openDock],
   );
 
   const handleOpenFile = useCallback(
     (path: string, pin?: boolean) => {
+      if (/\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i.test(path)) {
+        newImageTab(path);
+        return;
+      }
+      if (/\.pdf$/i.test(path)) {
+        newPdfTab(path);
+        return;
+      }
       openFileTab(path, pin ?? false);
     },
-    [openFileTab],
+    [openFileTab, newImageTab, newPdfTab],
   );
 
   const handleOpenSearchResult = useCallback(
@@ -343,7 +370,13 @@ export default function App() {
   const handlePathRenamed = useCallback(
     (from: string, to: string) => {
       for (const t of tabs) {
-        if (t.kind !== "editor" && t.kind !== "markdown" && t.kind !== "html") {
+        if (
+          t.kind !== "editor" &&
+          t.kind !== "markdown" &&
+          t.kind !== "html" &&
+          t.kind !== "image" &&
+          t.kind !== "pdf"
+        ) {
           continue;
         }
         if (t.path === from) {
@@ -363,16 +396,14 @@ export default function App() {
     [tabs, updateTab],
   );
 
-  const activeTerminalLeafCwd =
-    activeTab?.kind === "terminal"
-      ? (findLeafCwd(activeTab.paneTree, activeTab.activeLeafId) ??
-        activeTab.cwd ??
-        null)
-      : null;
-
   const activeFilePath = (() => {
     if (activeTab?.kind === "editor") return activeTab.path;
-    if (activeTab?.kind === "markdown" || activeTab?.kind === "html") {
+    if (
+      activeTab?.kind === "markdown" ||
+      activeTab?.kind === "html" ||
+      activeTab?.kind === "image" ||
+      activeTab?.kind === "pdf"
+    ) {
       return activeTab.path;
     }
     if (activeTab?.kind === "git-diff") {
@@ -391,14 +422,15 @@ export default function App() {
   const explorerActiveFilePath =
     activeTab?.kind === "editor" ||
     activeTab?.kind === "markdown" ||
-    activeTab?.kind === "html"
+    activeTab?.kind === "html" ||
+    activeTab?.kind === "image" ||
+    activeTab?.kind === "pdf"
       ? activeTab.path
       : null;
   const { sourceControl, toggleSourceControl, openGitGraphFromContext } =
     useSourceControlContext({
       activeTab,
       tabs,
-      activeTerminalLeafCwd,
       explorerRoot,
       launchCwd,
       launchCwdResolved,
@@ -419,6 +451,11 @@ export default function App() {
     [newPreviewTab],
   );
 
+  const openHttpClient = useCallback(
+    (url = "") => newHttpClientTab(url),
+    [newHttpClientTab],
+  );
+
   const openMarkdownPreview = useCallback(
     (path: string) => {
       newMarkdownTab(path);
@@ -433,45 +470,52 @@ export default function App() {
     [newHtmlPreviewTab],
   );
 
-  const splitActivePaneInActiveTab = useCallback(
+  const splitDock = useCallback(
     (dir: "row" | "col") => {
-      const t = tabsRef.current.find((x) => x.id === activeId);
-      if (!t || t.kind !== "terminal") return;
-      splitActivePane(activeId, dir);
+      if (!dockOpen) {
+        openDock();
+        return;
+      }
+      dock.splitActive(dir);
     },
-    [activeId, splitActivePane],
+    [dockOpen, openDock, dock],
   );
 
   const handleCloseTabOrPane = useCallback(() => {
-    const t = tabsRef.current.find((x) => x.id === activeId);
-    if (t?.kind === "terminal" && leafIds(t.paneTree).length > 1) {
-      closeActivePane(activeId);
+    const el = document.activeElement as HTMLElement | null;
+    const inDock = !!el?.closest?.("[data-terminal-dock]");
+    if (inDock) {
+      if (dock.paneCount > 1) {
+        void closeDockPaneGuarded(dock.activeLeafId);
+      } else {
+        toggleDock();
+      }
       return;
     }
-    void handleClose(activeId);
-  }, [activeId, closeActivePane, handleClose]);
+    handleClose(activeId);
+  }, [activeId, dock, toggleDock, closeDockPaneGuarded, handleClose]);
 
   const [zenMode, setZenMode] = useState(false);
 
   const shortcutHandlers = useMemo<ShortcutHandlers>(
     () => ({
       "commandPalette.open": () => setCommandPaletteOpen(true),
-      "tab.new": openNewTab,
-      "tab.newPrivate": openNewPrivateTab,
       "tab.newPreview": () => openPreviewTab(""),
+      "tab.newHttpClient": () => openHttpClient(),
       "tab.newEditor": () => setNewEditorOpen(true),
       "tab.close": handleCloseTabOrPane,
       "tab.next": () => cycleTab(1),
       "tab.prev": () => cycleTab(-1),
       "tab.selectByIndex": (e) => selectByIndex(parseInt(e.key, 10) - 1),
-      "pane.splitRight": () => splitActivePaneInActiveTab("row"),
-      "pane.splitDown": () => splitActivePaneInActiveTab("col"),
-      "pane.focusNext": () => focusNextPaneInTab(activeId, 1),
-      "pane.focusPrev": () => focusNextPaneInTab(activeId, -1),
+      "pane.splitRight": () => splitDock("row"),
+      "pane.splitDown": () => splitDock("col"),
+      "pane.focusNext": () => dock.focusNext(1),
+      "pane.focusPrev": () => dock.focusNext(-1),
       "pane.source": toggleSourceControl,
       "terminal.clear": () => {
         clearFocusedTerminal();
       },
+      "terminal.toggle": toggleDock,
       "search.focus": () => searchInlineRef.current?.focus(),
       "shortcuts.open": () => setShortcutsOpen((v) => !v),
       "settings.open": () => void openSettingsWindow(),
@@ -488,13 +532,13 @@ export default function App() {
       activeId,
       cycleTab,
       handleCloseTabOrPane,
-      openNewTab,
-      openNewPrivateTab,
       openPreviewTab,
+      openHttpClient,
       selectByIndex,
-      splitActivePaneInActiveTab,
-      focusNextPaneInTab,
+      splitDock,
+      dock,
       toggleSourceControl,
+      toggleDock,
       toggleSidebar,
       toggleExplorerFocus,
       zoomIn,
@@ -558,16 +602,16 @@ export default function App() {
     [updateTab],
   );
 
-  const handleTerminalCwd = useCallback(
+  const handleDockCwd = useCallback(
     (leafId: number, cwd: string) => {
-      setLeafCwd(leafId, cwd);
+      dock.setLeafCwd(leafId, cwd);
     },
-    [setLeafCwd],
+    [dock],
   );
 
-  const handleFocusLeaf = useCallback(
-    (tabId: number, leafId: number) => focusPane(tabId, leafId),
-    [focusPane],
+  const handleDockFocusLeaf = useCallback(
+    (leafId: number) => dock.focusPane(leafId),
+    [dock],
   );
 
   const openFolder = useCallback(async () => {
@@ -581,55 +625,32 @@ export default function App() {
     } catch {
       /* non-fatal */
     }
-    resetWorkspace(picked);
-  }, [explorerRoot, home, resetWorkspace]);
-
-  const handleAgentStarted = useCallback(
-    (tabId: number, _leafId: number, agent: string) => {
-      const tab = tabsRef.current.find((t) => t.id === tabId);
-      if (!tab || tab.kind !== "terminal") return;
-      if (tab.customTitle) return;
-      updateTab(tabId, {
-        customTitle: `${agentDisplayName(agent)}: ${tab.title}`,
-      });
-    },
-    [updateTab],
-  );
-
-  const handleAgentDone = useCallback(
-    (tabId: number) => {
-      if (!tabId) return;
-      // Reset custom title so the tab falls back to cwd-based label.
-      updateTab(tabId, { customTitle: "" });
-    },
-    [updateTab],
-  );
+    resetWorkspace();
+    dock.resetDock(picked);
+  }, [explorerRoot, home, resetWorkspace, dock]);
 
   const onActivateAgent = useCallback(
-    (tabId: number, leafId: number) => {
-      setActiveId(tabId);
-      focusPane(tabId, leafId);
-    },
-    [setActiveId, focusPane],
-  );
-
-  const handleLeafExit = useCallback(
-    (leafId: number, _code: number) => {
-      const all = tabsRef.current;
-      const tab = all.find(
-        (t) => t.kind === "terminal" && hasLeaf(t.paneTree, leafId),
-      );
-      if (!tab || tab.kind !== "terminal") return;
-      const isLast =
-        leafIds(tab.paneTree).length === 1 &&
-        all.filter((t) => t.kind === "terminal").length === 1;
-      if (isLast) {
-        void respawnSession(leafId, tab.cwd);
+    (surface: AgentSurface, leafId: number) => {
+      if (surface === "dock") {
+        openDock();
+        dock.focusPane(leafId);
       } else {
-        closePaneByLeaf(leafId);
+        openRightPanel();
+        usePiPanelModeStore.getState().setMode("terminal");
       }
     },
-    [closePaneByLeaf],
+    [openDock, dock, openRightPanel],
+  );
+
+  const handleDockLeafExit = useCallback(
+    (leafId: number, _code: number) => {
+      if (leafIds(dock.tree).length === 1) {
+        void respawnSession(leafId, dock.activeCwd ?? undefined);
+      } else {
+        dock.closePane(leafId);
+      }
+    },
+    [dock],
   );
 
   const handleEditorDirty = useCallback(
@@ -637,18 +658,7 @@ export default function App() {
     [updateTab],
   );
 
-  const handleRenameTab = useCallback(
-    (id: number, title: string) => updateTab(id, { customTitle: title.trim() }),
-    [updateTab],
-  );
-
   const searchTarget = useMemo<SearchTarget>(() => {
-    if (isTerminalTab && activeLeafId !== null && activeSearchAddon)
-      return {
-        kind: "terminal",
-        addon: activeSearchAddon,
-        focus: () => terminalRefs.current.get(activeLeafId)?.focus(),
-      };
     if (isEditorTab && activeEditorHandle)
       return {
         kind: "editor",
@@ -661,15 +671,21 @@ export default function App() {
         handle: gitHistoryHandle,
         focus: () => {},
       };
+    if (dockOpen && activeSearchAddon)
+      return {
+        kind: "terminal",
+        addon: activeSearchAddon,
+        focus: () => terminalRefs.current.get(dock.activeLeafId)?.focus(),
+      };
     return null;
   }, [
-    isTerminalTab,
     isEditorTab,
     isGitHistoryTab,
-    activeLeafId,
+    dockOpen,
     activeSearchAddon,
     activeEditorHandle,
     gitHistoryHandle,
+    dock.activeLeafId,
   ]);
 
   const commandPaletteActions = useMemo(
@@ -681,18 +697,19 @@ export default function App() {
             searchTarget,
             explorerRoot,
             home,
-            openNewTab,
-            openNewPrivate: openNewPrivateTab,
+            dockOpen,
+            dockPaneCount: dock.paneCount,
             openFolder,
             openNewEditor: () => setNewEditorOpen(true),
             openNewPreview: () => openPreviewTab(""),
             closeActiveTabOrPane: handleCloseTabOrPane,
             nextTab: () => cycleTab(1),
             previousTab: () => cycleTab(-1),
-            splitPaneRight: () => splitActivePaneInActiveTab("row"),
-            splitPaneDown: () => splitActivePaneInActiveTab("col"),
-            focusNextPane: () => focusNextPaneInTab(activeId, 1),
-            focusPreviousPane: () => focusNextPaneInTab(activeId, -1),
+            toggleDock,
+            splitPaneRight: () => splitDock("row"),
+            splitPaneDown: () => splitDock("col"),
+            focusNextPane: () => dock.focusNext(1),
+            focusPreviousPane: () => dock.focusNext(-1),
             focusSearch: () => searchInlineRef.current?.focus(),
             focusExplorerSearch: () => explorerRef.current?.focusSearch(),
             toggleSidebar,
@@ -707,18 +724,19 @@ export default function App() {
       searchTarget,
       explorerRoot,
       home,
-      openNewTab,
-      openNewPrivateTab,
+      dockOpen,
+      dock,
+      openFolder,
       openPreviewTab,
       handleCloseTabOrPane,
       cycleTab,
-      splitActivePaneInActiveTab,
-      focusNextPaneInTab,
+      toggleDock,
+      splitDock,
       toggleSidebar,
     ],
   );
 
-  const activeCwd = activeTerminalLeafCwd;
+  const activeCwd = dock.activeCwd;
 
   return (
     <ThemeProvider>
@@ -729,22 +747,18 @@ export default function App() {
               tabs={tabs}
               activeId={activeId}
               onSelect={setActiveId}
-              onNew={openNewTab}
-              onNewPrivate={openNewPrivateTab}
               onNewPreview={() => openPreviewTab("")}
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
+              onNewHttpClient={() => openHttpClient()}
+              onNewPi={onNewPi}
               onClose={handleClose}
               onPin={pinTab}
-              onRename={handleRenameTab}
               onToggleSidebar={toggleSidebar}
-              onTogglePiPanel={toggleRightPanel}
-              piPanelOpen={rightPanelOpen}
-              onSplit={splitActivePaneInActiveTab}
-              canSplit={
-                activeTerminalTab !== null &&
-                leafIds(activeTerminalTab.paneTree).length < MAX_PANES_PER_TAB
-              }
+              onTogglePiPanel={onTogglePiPanel}
+              piPanelOpen={rightPanelOpen || activeTab?.kind === "pi"}
+              onSplitDock={splitDock}
+              canSplitDock={dock.paneCount < MAX_DOCK_PANES}
               onActivateAgent={onActivateAgent}
               onOpenFolder={openFolder}
               onOpenSettings={() => void openSettingsWindow()}
@@ -808,27 +822,66 @@ export default function App() {
               </ResizablePanel>
               <ResizableHandle withHandle />
               <ResizablePanel id="workspace" defaultSize="78%" minSize="30%">
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="relative min-h-0 flex-1">
-                    <WorkspaceSurface
-                      tabs={tabs}
-                      activeId={activeId}
-                      activeTab={activeTab}
-                      registerTerminalHandle={registerTerminalHandle}
-                      onSearchReady={handleSearchReady}
-                      onCwd={handleTerminalCwd}
-                      onExit={handleLeafExit}
-                      onFocusLeaf={handleFocusLeaf}
-                      registerEditorHandle={registerEditorHandle}
-                      onEditorDirtyChange={handleEditorDirty}
-                      onEditorCloseTab={disposeTab}
-                      registerPreviewHandle={registerPreviewHandle}
-                      onPreviewUrlChange={handlePreviewUrl}
-                      onOpenCommitFile={openCommitFileDiffTab}
-                      onGitHistorySearchHandle={setGitHistoryHandle}
-                    />
-                  </div>
-                </div>
+                <ResizablePanelGroup orientation="vertical" className="h-full">
+                  <ResizablePanel id="editor-area" minSize="20%">
+                    <div className="relative h-full min-h-0">
+                      <WorkspaceSurface
+                        tabs={tabs}
+                        activeId={activeId}
+                        activeTab={activeTab}
+                        registerEditorHandle={registerEditorHandle}
+                        onEditorDirtyChange={handleEditorDirty}
+                        onEditorCloseTab={disposeTab}
+                        registerPreviewHandle={registerPreviewHandle}
+                        onPreviewUrlChange={handlePreviewUrl}
+                        onOpenCommitFile={openCommitFileDiffTab}
+                        onGitHistorySearchHandle={setGitHistoryHandle}
+                        piCwd={explorerRoot}
+                        piWorkspace={workspaceEnv}
+                      />
+                    </div>
+                  </ResizablePanel>
+                  {dockOpen ? <ResizableHandle withHandle /> : null}
+                  <ResizablePanel
+                    id="terminal-dock"
+                    panelRef={dockRef}
+                    defaultSize="260px"
+                    minSize="120px"
+                    maxSize="720px"
+                    collapsible
+                    collapsedSize={0}
+                    onResize={(size) => handleDockResize(size.inPixels)}
+                  >
+                    <div className="flex h-full min-h-0 flex-col border-t border-border/60 bg-card">
+                      {dockOpen ? (
+                        <>
+                          <TerminalDockHeader
+                            cwd={dock.activeCwd}
+                            canSplit={dock.paneCount < MAX_DOCK_PANES}
+                            onSplit={dock.splitActive}
+                            onClear={() => clearSession(dock.activeLeafId)}
+                            onHide={toggleDock}
+                          />
+                          <div className="min-h-0 flex-1 px-3 pt-2 pb-2">
+                            <TerminalDockView
+                              tree={dock.tree}
+                              activeLeafId={dock.activeLeafId}
+                              paneCount={dock.paneCount}
+                              registerHandle={registerTerminalHandle}
+                              onSearchReady={handleSearchReady}
+                              onCwd={handleDockCwd}
+                              onExit={handleDockLeafExit}
+                              onFocusLeaf={handleDockFocusLeaf}
+                              onClosePane={(leafId) =>
+                                void closeDockPaneGuarded(leafId)
+                              }
+                            />
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  </ResizablePanel>
+                </ResizablePanelGroup>
               </ResizablePanel>
               {rightPanelOpen ? <ResizableHandle withHandle /> : null}
               <ResizablePanel
@@ -842,7 +895,7 @@ export default function App() {
                 onResize={(size) => handleRightPanelResize(size.inPixels)}
               >
                 <div className="h-full min-h-0 border-l border-border/60 bg-card">
-                  {rightPanelOpen ? (
+                  {rightPanelOpen && !piTab ? (
                     <PiPanel cwd={explorerRoot} workspace={workspaceEnv} />
                   ) : null}
                 </div>
@@ -857,15 +910,17 @@ export default function App() {
               home={home}
               onCd={sendCd}
               onWorkspaceChange={switchWorkspace}
+              onToggleDock={toggleDock}
+              dockOpen={dockOpen}
             />
           )}
 
           <AgentNotificationsBridge
-            tabs={tabs}
-            activeId={activeId}
+            dockTree={dock.tree}
+            dockOpen={dockOpen}
+            dockActiveLeafId={dock.activeLeafId}
+            piPanelVisible={rightPanelOpen && piPanelMode === "terminal"}
             onActivate={onActivateAgent}
-            onAgentStarted={handleAgentStarted}
-            onAgentDone={handleAgentDone}
           />
           <Toaster position="bottom-right" />
 
@@ -896,9 +951,9 @@ export default function App() {
             pendingCloseTab={pendingCloseTab}
             onCancelClose={cancelClose}
             onConfirmClose={confirmClose}
-            pendingTerminalCloseTab={pendingTerminalCloseTab}
-            onCancelTerminalClose={cancelTerminalClose}
-            onConfirmTerminalClose={confirmTerminalClose}
+            pendingDockPaneClose={pendingDockPaneClose}
+            onCancelDockPaneClose={cancelDockPaneClose}
+            onConfirmDockPaneClose={confirmDockPaneClose}
             pendingDeleteTabs={pendingDeleteTabs}
             onCancelDeleteClose={cancelDeleteClose}
             onConfirmDeleteClose={confirmDeleteClose}

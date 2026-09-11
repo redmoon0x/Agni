@@ -15,23 +15,23 @@ type Props = {
   pendingCloseTab: number | null;
   onCancelClose: () => void;
   onConfirmClose: () => void;
-  pendingTerminalCloseTab: number | null;
-  onCancelTerminalClose: () => void;
-  onConfirmTerminalClose: () => void;
+  pendingDockPaneClose: number | null;
+  onCancelDockPaneClose: () => void;
+  onConfirmDockPaneClose: () => void;
   pendingDeleteTabs: number[] | null;
   onCancelDeleteClose: () => void;
   onConfirmDeleteClose: () => void;
 };
 
-/** Confirmation dialogs for closing dirty editors and terminals with live processes. */
+/** Confirmation dialogs for closing dirty editors and terminal panes with live processes. */
 export function CloseDialogs({
   tabs,
   pendingCloseTab,
   onCancelClose,
   onConfirmClose,
-  pendingTerminalCloseTab,
-  onCancelTerminalClose,
-  onConfirmTerminalClose,
+  pendingDockPaneClose,
+  onCancelDockPaneClose,
+  onConfirmDockPaneClose,
   pendingDeleteTabs,
   onCancelDeleteClose,
   onConfirmDeleteClose,
@@ -65,21 +65,21 @@ export function CloseDialogs({
       </AlertDialog>
 
       <AlertDialog
-        open={pendingTerminalCloseTab !== null}
-        onOpenChange={(open) => !open && onCancelTerminalClose()}
+        open={pendingDockPaneClose !== null}
+        onOpenChange={(open) => !open && onCancelDockPaneClose()}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Close Terminal?</AlertDialogTitle>
             <AlertDialogDescription>
-              A process is running. Closing this tab will terminate it.
+              A process is running. Closing this pane will terminate it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={onCancelTerminalClose}>
+            <AlertDialogCancel onClick={onCancelDockPaneClose}>
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction onClick={onConfirmTerminalClose}>
+            <AlertDialogAction onClick={onConfirmDockPaneClose}>
               Close Anyway
             </AlertDialogAction>
           </AlertDialogFooter>
