@@ -2,9 +2,7 @@ import {
   Add01Icon,
   ArrowDown01Icon,
   ArrowUp02Icon,
-  BubbleChatIcon,
   Clock01Icon,
-  ComputerTerminal02Icon,
   FileEditIcon,
   Loading03Icon,
   MoreHorizontalIcon,
@@ -49,9 +47,7 @@ import {
   InlineCode,
   MarkdownCodeBlock,
 } from "@/modules/markdown/MarkdownCodeBlock";
-import { PI_TERMINAL_LEAF_ID } from "@/modules/pi-agent/lib/terminalLeaf";
 import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
-import { usePiPanelModeStore } from "@/modules/pi-agent/panelModeStore";
 import { messageText } from "@/modules/pi-agent/rpcState";
 import {
   abortPi,
@@ -89,8 +85,6 @@ import type {
   PiToolActivity,
 } from "@/modules/pi-agent/types";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
-import { TerminalPane } from "@/modules/terminal";
-import { respawnSession } from "@/modules/terminal/lib/useTerminalSession";
 import type { WorkspaceEnv } from "@/modules/workspace";
 
 type Props = {
@@ -279,7 +273,8 @@ const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 function readImageAttachment(file: File): Promise<PiImageAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read image"));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error("Could not read image"));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       const data = result.slice(result.indexOf(",") + 1);
@@ -421,9 +416,13 @@ function PiComposer({ root }: { root: string | null }) {
 
   const addImages = async (files: FileList | null) => {
     if (!files?.length) return;
-    const nextFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    const nextFiles = Array.from(files).filter((file) =>
+      file.type.startsWith("image/"),
+    );
     if (nextFiles.length !== files.length) {
-      usePiStore.setState({ rpcError: "Only image files can be attached to Pi." });
+      usePiStore.setState({
+        rpcError: "Only image files can be attached to Pi.",
+      });
     }
     const available = MAX_IMAGE_ATTACHMENTS - attachments.length;
     const selected = nextFiles.slice(0, available);
@@ -620,7 +619,7 @@ function PiComposer({ root }: { root: string | null }) {
               ? "Queue a follow-up for Pi... (@ to reference a file)"
               : session.isStreaming
                 ? "Steer Pi... (@ to reference a file)"
-              : "Ask Pi to work on something... (@ to reference a file)"
+                : "Ask Pi to work on something... (@ to reference a file)"
           }
           rows={3}
           disabled={connection !== "ready"}
@@ -989,52 +988,8 @@ function formatSessionCost(cost: number | undefined): string | null {
   return `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}`;
 }
 
-function PiPanelModeToggle() {
-  const mode = usePiPanelModeStore((s) => s.mode);
-  const setMode = usePiPanelModeStore((s) => s.setMode);
-  return (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-foreground/[0.05] p-0.5">
-      <button
-        type="button"
-        title="Pi chat"
-        aria-pressed={mode === "chat"}
-        onClick={() => setMode("chat")}
-        className={cn(
-          "flex h-6 items-center gap-1.5 rounded px-2 text-[11px] font-medium",
-          mode === "chat"
-            ? "bg-background text-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <HugeiconsIcon icon={BubbleChatIcon} size={13} strokeWidth={1.75} />
-        Chat
-      </button>
-      <button
-        type="button"
-        title="Terminal"
-        aria-pressed={mode === "terminal"}
-        onClick={() => setMode("terminal")}
-        className={cn(
-          "flex h-6 items-center gap-1.5 rounded px-2 text-[11px] font-medium",
-          mode === "terminal"
-            ? "bg-background text-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <HugeiconsIcon
-          icon={ComputerTerminal02Icon}
-          size={13}
-          strokeWidth={1.75}
-        />
-        Terminal
-      </button>
-    </div>
-  );
-}
-
 export function PiPanel({ cwd, workspace }: Props) {
   const state = usePiStore();
-  const mode = usePiPanelModeStore((s) => s.mode);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -1096,278 +1051,240 @@ export function PiPanel({ cwd, workspace }: Props) {
           )}
         />
         <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
-          {mode === "terminal"
-            ? "Terminal"
-            : (state.extensionTitle ??
-              (state.session.isCompacting
-                ? "Compacting"
-                : state.session.isStreaming
-                  ? "Working"
-                  : (state.session.sessionName ??
-                    (state.connection === "ready"
-                      ? "Ready"
-                      : state.connection))))}
+          {state.extensionTitle ??
+            (state.session.isCompacting
+              ? "Compacting"
+              : state.session.isStreaming
+                ? "Working"
+                : (state.session.sessionName ??
+                  (state.connection === "ready" ? "Ready" : state.connection)))}
         </span>
         {extensionStatus ? (
-          <span className="max-w-28 truncate text-[10px] text-muted-foreground" title={extensionStatus}>
+          <span
+            className="max-w-28 truncate text-[10px] text-muted-foreground"
+            title={extensionStatus}
+          >
             {extensionStatus}
           </span>
         ) : null}
-        {mode === "chat" ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Pi session menu"
+              className="rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground"
+            >
+              <HugeiconsIcon icon={MoreHorizontalIcon} size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {state.stats ? (
+              <DropdownMenuLabel className="text-[10px]">
+                {state.stats.totalMessages ?? 0} msgs
+                {state.stats.toolCalls
+                  ? ` · ${state.stats.toolCalls} tools`
+                  : ""}
+                {formatSessionCost(state.stats.cost)
+                  ? ` · ${formatSessionCost(state.stats.cost)}`
+                  : ""}
+              </DropdownMenuLabel>
+            ) : null}
+            <DropdownMenuItem onSelect={() => runPiAction(newPiSession())}>
+              <HugeiconsIcon icon={Add01Icon} />
+              New session
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!state.session.sessionFile}
+              onSelect={() => setSessionSwitcherOpen(true)}
+            >
+              <HugeiconsIcon icon={Clock01Icon} />
+              Switch session
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.session.isStreaming}
+              onSelect={() => setRenameDialogOpen(true)}
+            >
+              Rename session
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.session.isStreaming}
+              onSelect={() => setForkDialogOpen(true)}
+            >
+              Fork from message
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.session.isStreaming}
+              onSelect={() => runPiAction(clonePiSession())}
+            >
+              Clone current branch
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => runPiAction(exportPiSession())}>
+              Export session HTML
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.session.isStreaming}
+              onSelect={() => runPiAction(compactPiSession())}
+            >
+              Compact context
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={state.session.autoCompactionEnabled}
+              onCheckedChange={(checked) =>
+                runPiAction(setPiAutoCompaction(checked))
+              }
+            >
+              Auto-compact
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={autoRetryEnabled}
+              onCheckedChange={(checked) => {
+                setAutoRetryEnabled(checked);
+                runPiAction(setPiAutoRetry(checked));
+              }}
+            >
+              Auto-retry
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={state.session.steeringMode === "all"}
+              onCheckedChange={(checked) =>
+                runPiAction(
+                  setPiSteeringMode(checked ? "all" : "one-at-a-time"),
+                )
+              }
+            >
+              Run all steering messages
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={state.session.followUpMode === "all"}
+              onCheckedChange={(checked) =>
+                runPiAction(
+                  setPiFollowUpMode(checked ? "all" : "one-at-a-time"),
+                )
+              }
+            >
+              Run all follow-ups
+            </DropdownMenuCheckboxItem>
+            {state.session.isRetrying ? (
+              <DropdownMenuItem onSelect={() => runPiAction(abortPiRetry())}>
+                Cancel retry
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => runPiAction(restartPi())}>
+              <HugeiconsIcon icon={RefreshIcon} />
+              Restart Pi
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={
+                state.connection !== "ready" && state.connection !== "starting"
+              }
+              onSelect={() => runPiAction(stopPi())}
+            >
+              <HugeiconsIcon icon={PowerIcon} />
+              Stop Pi
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <PiSessionSwitcher
+          open={sessionSwitcherOpen}
+          onOpenChange={setSessionSwitcherOpen}
+          currentSessionFile={state.session.sessionFile}
+        />
+        <PiForkDialog open={forkDialogOpen} onOpenChange={setForkDialogOpen} />
+        <RenameSessionDialog
+          open={renameDialogOpen}
+          onOpenChange={setRenameDialogOpen}
+          initialName={state.session.sessionName}
+        />
+      </div>
+
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <div ref={contentRef} className="min-h-full">
+          {state.connection === "starting" ? (
+            <div className="flex h-full items-center justify-center gap-2 text-[11px] text-muted-foreground">
+              <HugeiconsIcon
+                icon={Loading03Icon}
+                size={14}
+                className="animate-spin"
+              />
+              Starting Pi
+            </div>
+          ) : unavailable ? (
+            <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+              <div className="mb-3 flex size-9 items-center justify-center rounded-xl bg-foreground/[0.05]">
+                <PiLogoIcon size={18} />
+              </div>
+              <p className="text-[12px] font-medium">
+                {state.connection === "stopped"
+                  ? "Pi stopped"
+                  : "Pi is unavailable"}
+              </p>
+              <p className="mt-1.5 max-w-56 text-[10px] leading-relaxed text-muted-foreground">
+                {state.connection === "stopped"
+                  ? "You stopped the Pi process."
+                  : (state.processError ?? "The Pi process has exited.")}
+              </p>
               <button
                 type="button"
-                aria-label="Pi session menu"
-                className="rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground"
+                onClick={() => runPiAction(restartPi())}
+                className="mt-3 rounded-md border border-border px-3 py-1.5 text-[11px] hover:bg-foreground/[0.05]"
               >
-                <HugeiconsIcon icon={MoreHorizontalIcon} size={15} />
+                {state.connection === "stopped" ? "Start Pi" : "Try again"}
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              {state.stats ? (
-                <DropdownMenuLabel className="text-[10px]">
-                  {state.stats.totalMessages ?? 0} msgs
-                  {state.stats.toolCalls
-                    ? ` · ${state.stats.toolCalls} tools`
-                    : ""}
-                  {formatSessionCost(state.stats.cost)
-                    ? ` · ${formatSessionCost(state.stats.cost)}`
-                    : ""}
-                </DropdownMenuLabel>
-              ) : null}
-              <DropdownMenuItem onSelect={() => runPiAction(newPiSession())}>
-                <HugeiconsIcon icon={Add01Icon} />
-                New session
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!state.session.sessionFile}
-                onSelect={() => setSessionSwitcherOpen(true)}
-              >
-                <HugeiconsIcon icon={Clock01Icon} />
-                Switch session
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={state.session.isStreaming}
-                onSelect={() => setRenameDialogOpen(true)}
-              >
-                Rename session
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={state.session.isStreaming}
-                onSelect={() => setForkDialogOpen(true)}
-              >
-                Fork from message
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={state.session.isStreaming}
-                onSelect={() => runPiAction(clonePiSession())}
-              >
-                Clone current branch
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => runPiAction(exportPiSession())}>
-                Export session HTML
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={state.session.isStreaming}
-                onSelect={() => runPiAction(compactPiSession())}
-              >
-                Compact context
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem
-                checked={state.session.autoCompactionEnabled}
-                onCheckedChange={(checked) =>
-                  runPiAction(setPiAutoCompaction(checked))
-                }
-              >
-                Auto-compact
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={autoRetryEnabled}
-                onCheckedChange={(checked) => {
-                  setAutoRetryEnabled(checked);
-                  runPiAction(setPiAutoRetry(checked));
-                }}
-              >
-                Auto-retry
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={state.session.steeringMode === "all"}
-                onCheckedChange={(checked) =>
-                  runPiAction(
-                    setPiSteeringMode(checked ? "all" : "one-at-a-time"),
-                  )
-                }
-              >
-                Run all steering messages
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={state.session.followUpMode === "all"}
-                onCheckedChange={(checked) =>
-                  runPiAction(
-                    setPiFollowUpMode(checked ? "all" : "one-at-a-time"),
-                  )
-                }
-              >
-                Run all follow-ups
-              </DropdownMenuCheckboxItem>
-              {state.session.isRetrying ? (
-                <DropdownMenuItem onSelect={() => runPiAction(abortPiRetry())}>
-                  Cancel retry
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => runPiAction(restartPi())}>
-                <HugeiconsIcon icon={RefreshIcon} />
-                Restart Pi
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={
-                  state.connection !== "ready" &&
-                  state.connection !== "starting"
-                }
-                onSelect={() => runPiAction(stopPi())}
-              >
-                <HugeiconsIcon icon={PowerIcon} />
-                Stop Pi
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-        {mode === "chat" ? (
-          <PiSessionSwitcher
-            open={sessionSwitcherOpen}
-            onOpenChange={setSessionSwitcherOpen}
-            currentSessionFile={state.session.sessionFile}
-          />
-        ) : null}
-        {mode === "chat" ? (
-          <PiForkDialog
-            open={forkDialogOpen}
-            onOpenChange={setForkDialogOpen}
-          />
-        ) : null}
-        {mode === "chat" ? (
-          <RenameSessionDialog
-            open={renameDialogOpen}
-            onOpenChange={setRenameDialogOpen}
-            initialName={state.session.sessionName}
-          />
-        ) : null}
+            </div>
+          ) : empty ? (
+            <div className="flex h-full flex-col items-center justify-center px-5 text-center">
+              <div className="flex size-20 items-center justify-center rounded-3xl bg-foreground/[0.05]">
+                <PiLogoIcon size={44} className="text-foreground/70" />
+              </div>
+              <p className="mt-4 text-[12px] font-medium text-muted-foreground">
+                Ask Pi to work on something
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {[...state.messages, ...state.tools]
+                .sort(
+                  (a, b) =>
+                    (a.sequence ?? Number.MAX_SAFE_INTEGER) -
+                    (b.sequence ?? Number.MAX_SAFE_INTEGER),
+                )
+                .map((item) => {
+                  if ("role" in item) {
+                    return (
+                      <Message
+                        key={`${item.role}-${item.timestamp ?? item.sequence ?? item}`}
+                        message={item}
+                      />
+                    );
+                  }
+                  return <ToolRow key={item.id} tool={item} />;
+                })}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex h-7 shrink-0 items-center border-b border-border/60 px-2">
-        <PiPanelModeToggle />
-      </div>
-
-      {mode === "terminal" ? (
-        <div className="min-h-0 flex-1 p-2">
-          <TerminalPane
-            leafId={PI_TERMINAL_LEAF_ID}
-            visible
-            focused
-            initialCwd={cwd ?? undefined}
-            onExit={() =>
-              void respawnSession(PI_TERMINAL_LEAF_ID, cwd ?? undefined)
-            }
-          />
-        </div>
-      ) : (
-        <div
-          ref={scrollRef}
-          className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
-        >
-          <div ref={contentRef} className="min-h-full">
-            {state.connection === "starting" ? (
-              <div className="flex h-full items-center justify-center gap-2 text-[11px] text-muted-foreground">
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  size={14}
-                  className="animate-spin"
-                />
-                Starting Pi
-              </div>
-            ) : unavailable ? (
-              <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-                <div className="mb-3 flex size-9 items-center justify-center rounded-xl bg-foreground/[0.05]">
-                  <PiLogoIcon size={18} />
-                </div>
-                <p className="text-[12px] font-medium">
-                  {state.connection === "stopped"
-                    ? "Pi stopped"
-                    : "Pi is unavailable"}
-                </p>
-                <p className="mt-1.5 max-w-56 text-[10px] leading-relaxed text-muted-foreground">
-                  {state.connection === "stopped"
-                    ? "You stopped the Pi process."
-                    : (state.processError ?? "The Pi process has exited.")}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => runPiAction(restartPi())}
-                  className="mt-3 rounded-md border border-border px-3 py-1.5 text-[11px] hover:bg-foreground/[0.05]"
-                >
-                  {state.connection === "stopped" ? "Start Pi" : "Try again"}
-                </button>
-              </div>
-            ) : empty ? (
-              <div className="flex h-full flex-col items-center justify-center px-5 text-center">
-                <div className="flex size-20 items-center justify-center rounded-3xl bg-foreground/[0.05]">
-                  <PiLogoIcon size={44} className="text-foreground/70" />
-                </div>
-                <p className="mt-4 text-[12px] font-medium text-muted-foreground">
-                  Ask Pi to work on something
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {[...state.messages, ...state.tools]
-                  .sort(
-                    (a, b) =>
-                      (a.sequence ?? Number.MAX_SAFE_INTEGER) -
-                      (b.sequence ?? Number.MAX_SAFE_INTEGER),
-                  )
-                  .map((item) => {
-                    if ("role" in item) {
-                      return (
-                        <Message
-                          key={`${item.role}-${item.timestamp ?? item.sequence ?? item}`}
-                          message={item}
-                        />
-                      );
-                    }
-                    return <ToolRow key={item.id} tool={item} />;
-                  })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {mode === "chat" && state.rpcError ? (
+      {state.rpcError ? (
         <div className="mx-2 mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[10px] leading-relaxed text-destructive">
           {state.rpcError}
         </div>
       ) : null}
-      {mode === "chat" && state.extensionRequest ? (
+      {state.extensionRequest ? (
         <ExtensionPrompt request={state.extensionRequest} />
       ) : null}
 
-      {mode === "chat" ? (
-        <>
-          <ExtensionWidgets
-            widgets={state.extensionWidgets}
-            placement="aboveEditor"
-          />
-          <PiComposer root={cwd} />
-          <ExtensionWidgets
-            widgets={state.extensionWidgets}
-            placement="belowEditor"
-          />
-        </>
-      ) : null}
+      <ExtensionWidgets
+        widgets={state.extensionWidgets}
+        placement="aboveEditor"
+      />
+      <PiComposer root={cwd} />
+      <ExtensionWidgets
+        widgets={state.extensionWidgets}
+        placement="belowEditor"
+      />
     </div>
   );
 }

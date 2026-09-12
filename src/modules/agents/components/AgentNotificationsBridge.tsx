@@ -1,38 +1,32 @@
-import { PI_TERMINAL_LEAF_ID } from "@/modules/pi-agent";
 import { hasLeaf, leafIdForPty } from "@/modules/terminal";
 import type { PaneNode } from "@/modules/terminal/lib/panes";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import { maybeTriggerManagedReview } from "../lib/review";
 import { routeAgentNotification } from "../lib/route";
-import type { AgentSession, AgentSignal, AgentSurface } from "../lib/types";
+import type { AgentSession, AgentSignal } from "../lib/types";
 import { useWindowFocus } from "../lib/useWindowFocus";
 import { useAgentStore } from "../store/agentStore";
 import { useManagedAgentsStore } from "../store/managedAgentsStore";
 
-type Activate = (surface: AgentSurface, leafId: number) => void;
+type Activate = (leafId: number) => void;
 type Ctx = {
   dockTree: PaneNode;
   dockOpen: boolean;
   dockActiveLeafId: number;
-  /** Pi panel is open and showing its terminal mode. */
-  piPanelVisible: boolean;
   focused: boolean;
   onActivate: Activate;
 };
 
-function resolveSurface(dockTree: PaneNode, leafId: number): AgentSurface | null {
-  if (leafId === PI_TERMINAL_LEAF_ID) return "pi-panel";
-  if (hasLeaf(dockTree, leafId)) return "dock";
-  return null;
+function isVisible(ctx: Ctx, leafId: number): boolean {
+  return ctx.dockOpen && ctx.dockActiveLeafId === leafId;
 }
 
-function isSurfaceVisible(ctx: Ctx, surface: AgentSurface, leafId: number): boolean {
-  if (surface === "dock") return ctx.dockOpen && ctx.dockActiveLeafId === leafId;
-  return ctx.piPanelVisible;
-}
-
-function route(session: AgentSession, kind: "attention" | "finished", ctx: Ctx): void {
+function route(
+  session: AgentSession,
+  kind: "attention" | "finished",
+  ctx: Ctx,
+): void {
   const heading =
     kind === "attention"
       ? `${session.agent} needs your input`
@@ -44,12 +38,11 @@ function route(session: AgentSession, kind: "attention" | "finished", ctx: Ctx):
     kind,
     title: heading,
     focused: ctx.focused,
-    visible: isSurfaceVisible(ctx, session.surface, session.leafId),
+    visible: isVisible(ctx, session.leafId),
     // Stop fires every turn, so finished only updates the bell; attention toasts.
     allowToast: kind === "attention",
-    surface: session.surface,
     leafId: session.leafId,
-    onActivate: () => ctx.onActivate(session.surface, session.leafId),
+    onActivate: () => ctx.onActivate(session.leafId),
   });
 }
 
@@ -60,9 +53,8 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
 
   switch (sig.kind) {
     case "started": {
-      const surface = resolveSurface(ctx.dockTree, leafId);
-      if (!surface) return;
-      store.start(leafId, surface, sig.agent ?? "agent");
+      if (!hasLeaf(ctx.dockTree, leafId)) return;
+      store.start(leafId, sig.agent ?? "agent");
       return;
     }
     case "working":
@@ -93,13 +85,11 @@ export function AgentNotificationsBridge({
   dockTree,
   dockOpen,
   dockActiveLeafId,
-  piPanelVisible,
   onActivate,
 }: {
   dockTree: PaneNode;
   dockOpen: boolean;
   dockActiveLeafId: number;
-  piPanelVisible: boolean;
   onActivate: Activate;
 }) {
   const focused = useWindowFocus();
@@ -107,7 +97,6 @@ export function AgentNotificationsBridge({
     dockTree,
     dockOpen,
     dockActiveLeafId,
-    piPanelVisible,
     focused,
     onActivate,
   });
@@ -115,7 +104,6 @@ export function AgentNotificationsBridge({
     dockTree,
     dockOpen,
     dockActiveLeafId,
-    piPanelVisible,
     focused,
     onActivate,
   };

@@ -31,7 +31,8 @@ export type ShortcutId =
   | "settings.open"
   | "sidebar.toggle"
   | "editor.undo"
-  | "editor.redo";
+  | "editor.redo"
+  | "editor.split";
 
 export type ShortcutGroup =
   | "General"
@@ -242,6 +243,13 @@ export const SHORTCUTS: Shortcut[] = [
     label: "Redo",
     group: "Editor",
     defaultBindings: [{ [MOD_PROP]: true, key: "y" }],
+  },
+  // Unlike undo/redo above, this one has a real App-level handler.
+  {
+    id: "editor.split",
+    label: "Toggle editor split",
+    group: "Editor",
+    defaultBindings: [{ [MOD_PROP]: true, key: "\\" }],
   },
 ];
 

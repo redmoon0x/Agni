@@ -1,4 +1,5 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { cn } from "@/lib/utils";
 import { EditorStack, GitDiffStack } from "@/modules/editor";
 import { GitHistoryStack } from "@/modules/git-history";
@@ -18,10 +19,12 @@ type GitHistoryStackProps = ComponentProps<typeof GitHistoryStack>;
 type Props = {
   tabs: Tab[];
   activeId: number;
+  secondaryId: number | null;
   activeTab: Tab | undefined;
   registerEditorHandle: EditorStackProps["registerHandle"];
   onEditorDirtyChange: EditorStackProps["onDirtyChange"];
   onEditorCloseTab: EditorStackProps["onCloseTab"];
+  onCloseSplit: () => void;
   registerPreviewHandle: PreviewStackProps["registerHandle"];
   onPreviewUrlChange: PreviewStackProps["onUrlChange"];
   onOpenCommitFile: GitHistoryStackProps["onOpenCommitFile"];
@@ -31,17 +34,49 @@ type Props = {
 };
 
 /**
- * Stacks every tab-kind surface absolutely on top of each other and toggles
- * visibility off the active tab, so panes keep their mounted state (editor
- * scroll, ...) when switching tabs. Renders an empty state when no tabs are open.
+ * One tab-kind surface: absolutely stacked, toggled visible off the active tab
+ * so panes keep their mounted state (editor scroll, ...) across switches. The
+ * error boundary sits inside the visibility wrapper so a crashed (and hidden)
+ * pane stays hidden instead of drawing its fallback over the active tab.
  */
+function TabPane({
+  visible,
+  padded = true,
+  label,
+  resetKey,
+  children,
+}: {
+  visible: boolean;
+  padded?: boolean;
+  label: string;
+  resetKey: unknown;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "absolute inset-0",
+        padded && "px-3 pt-2 pb-2",
+        !visible && "invisible pointer-events-none",
+      )}
+      aria-hidden={!visible}
+    >
+      <ErrorBoundary label={label} resetKey={resetKey} inline>
+        {children}
+      </ErrorBoundary>
+    </div>
+  );
+}
+
 export function WorkspaceSurface({
   tabs,
   activeId,
+  secondaryId,
   activeTab,
   registerEditorHandle,
   onEditorDirtyChange,
   onEditorCloseTab,
+  onCloseSplit,
   registerPreviewHandle,
   onPreviewUrlChange,
   onOpenCommitFile,
@@ -71,77 +106,42 @@ export function WorkspaceSurface({
           </p>
         </div>
       ) : null}
-      <div
-        className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
-          !isEditorTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isEditorTab}
-      >
+      <TabPane visible={isEditorTab} label="Editor" resetKey={activeId}>
         <EditorStack
           tabs={tabs}
           activeId={activeId}
+          secondaryId={secondaryId}
+          onCloseSplit={onCloseSplit}
           registerHandle={registerEditorHandle}
           onDirtyChange={onEditorDirtyChange}
           onCloseTab={onEditorCloseTab}
         />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
-          !isPreviewTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isPreviewTab}
-      >
+      </TabPane>
+      <TabPane visible={isPreviewTab} label="Preview" resetKey={activeId}>
         <PreviewStack
           tabs={tabs}
           activeId={activeId}
           registerHandle={registerPreviewHandle}
           onUrlChange={onPreviewUrlChange}
         />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
-          !isMarkdownTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isMarkdownTab}
-      >
+      </TabPane>
+      <TabPane visible={isMarkdownTab} label="Markdown" resetKey={activeId}>
         <MarkdownStack tabs={tabs} activeId={activeId} />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
-          !isHtmlPreviewTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isHtmlPreviewTab}
-      >
+      </TabPane>
+      <TabPane visible={isHtmlPreviewTab} label="HTML preview" resetKey={activeId}>
         <HtmlPreviewStack tabs={tabs} activeId={activeId} />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
-          !isMediaTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isMediaTab}
-      >
+      </TabPane>
+      <TabPane visible={isMediaTab} label="Media" resetKey={activeId}>
         <MediaPreviewStack tabs={tabs} activeId={activeId} />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0 px-3 pt-2 pb-2",
-          !isGitDiffTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isGitDiffTab}
-      >
+      </TabPane>
+      <TabPane visible={isGitDiffTab} label="Diff" resetKey={activeId}>
         <GitDiffStack tabs={tabs} activeId={activeId} />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0",
-          !isGitHistoryTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isGitHistoryTab}
+      </TabPane>
+      <TabPane
+        visible={isGitHistoryTab}
+        padded={false}
+        label="Git history"
+        resetKey={activeId}
       >
         <GitHistoryStack
           tabs={tabs}
@@ -149,26 +149,19 @@ export function WorkspaceSurface({
           onOpenCommitFile={onOpenCommitFile}
           onSearchHandle={onGitHistorySearchHandle}
         />
-      </div>
-      <div
-        className={cn(
-          "absolute inset-0",
-          !isHttpClientTab && "invisible pointer-events-none",
-        )}
-        aria-hidden={!isHttpClientTab}
+      </TabPane>
+      <TabPane
+        visible={isHttpClientTab}
+        padded={false}
+        label="HTTP client"
+        resetKey={activeId}
       >
         <HttpClientStack tabs={tabs} activeId={activeId} />
-      </div>
+      </TabPane>
       {hasPiTab ? (
-        <div
-          className={cn(
-            "absolute inset-0",
-            !isPiTab && "invisible pointer-events-none",
-          )}
-          aria-hidden={!isPiTab}
-        >
+        <TabPane visible={isPiTab} padded={false} label="Pi" resetKey={activeId}>
           <PiPanel cwd={piCwd} workspace={piWorkspace} />
-        </div>
+        </TabPane>
       ) : null}
     </div>
   );

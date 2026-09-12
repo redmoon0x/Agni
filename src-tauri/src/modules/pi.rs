@@ -204,7 +204,10 @@ fn first_user_message_text(value: &Value) -> Option<String> {
         Value::String(text) => Some(text.clone()),
         Value::Array(blocks) => blocks.iter().find_map(|block| {
             if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                block.get("text").and_then(|t| t.as_str()).map(str::to_string)
+                block
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .map(str::to_string)
             } else {
                 None
             }
@@ -229,14 +232,20 @@ fn read_session_entry(path: &std::path::Path) -> Option<PiSessionEntry> {
     let mut name: Option<String> = None;
     let mut explicit_name = false;
 
-    for line in std::io::BufReader::new(file).lines().take(SESSION_SCAN_LINES) {
+    for line in std::io::BufReader::new(file)
+        .lines()
+        .take(SESSION_SCAN_LINES)
+    {
         let Ok(line) = line else { break };
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         match value.get("type").and_then(|v| v.as_str()) {
             Some("session") if timestamp.is_none() => {
-                timestamp = value.get("timestamp").and_then(|v| v.as_str()).map(str::to_string);
+                timestamp = value
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
             }
             Some("session_info") => {
                 if let Some(explicit) = value.get("name").and_then(|v| v.as_str()) {

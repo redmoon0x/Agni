@@ -2,9 +2,6 @@ export type AgentStatus = "working" | "waiting";
 
 export type AgentSource = "terminal" | "local";
 
-/** Which terminal surface an agent is running in -- the bottom dock or the Pi panel's terminal mode. */
-export type AgentSurface = "dock" | "pi-panel";
-
 export type AgentSignalKind =
   | "started"
   | "working"
@@ -20,7 +17,6 @@ export type AgentSignal = {
 
 export type AgentSession = {
   leafId: number;
-  surface: AgentSurface;
   agent: string;
   status: AgentStatus;
   startedAt: number;
@@ -32,7 +28,6 @@ export type AgentNotification = {
   id: string;
   source: AgentSource;
   leafId: number;
-  surface: AgentSurface;
   agent: string;
   kind: NotificationKind;
   at: number;

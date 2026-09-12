@@ -21,8 +21,10 @@ import { vim } from "@replit/codemirror-vim";
 import {
   buildSharedExtensions,
   languageCompartment,
+  lintCompartment,
   vimCompartment,
 } from "./lib/extensions";
+import { lintExtension } from "./lib/externalDiagnostics";
 import { initVimGlobals, vimHandlersExtension } from "./lib/vim";
 
 initVimGlobals();
@@ -67,6 +69,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
     const cmRef = useRef<ReactCodeMirrorRef>(null);
     const editorThemeId = usePreferencesStore((s) => s.editorTheme);
     const vimMode = usePreferencesStore((s) => s.vimMode);
+    const inlineDiagnostics = usePreferencesStore(
+      (s) => s.editorInlineDiagnostics,
+    );
     const languageRef = useRef<string | null>(null);
     const themeExt = EDITOR_THEME_EXT[editorThemeId] ?? EDITOR_THEME_EXT.atomone;
 
@@ -101,6 +106,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
         })),
         ...buildSharedExtensions(),
         languageCompartment.of([]),
+        lintCompartment.of([]),
         keymap.of([
           {
             key: "Mod-s",
@@ -154,6 +160,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
         cancelled = true;
       };
     }, [path, doc.status]);
+
+    // Optional external linter (gutter + linter source). Gated on the pref and
+    // on the document being ready, since the view does not exist while loading.
+    useEffect(() => {
+      if (doc.status !== "ready") return;
+      const view = cmRef.current?.view;
+      if (!view) return;
+      const ext = inlineDiagnostics ? (lintExtension(path) ?? []) : [];
+      view.dispatch({ effects: lintCompartment.reconfigure(ext) });
+    }, [path, inlineDiagnostics, doc.status]);
 
     useImperativeHandle(
       ref,

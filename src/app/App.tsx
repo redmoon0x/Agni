@@ -1,5 +1,7 @@
 import type { SearchAddon } from "@xterm/addon-search";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -11,7 +13,7 @@ import { getLaunchDir } from "@/lib/launchDir";
 import { native } from "@/lib/native";
 import { quoteShellArg } from "@/lib/shellQuote";
 import { useZoom } from "@/lib/useZoom";
-import { AgentNotificationsBridge, type AgentSurface } from "@/modules/agents";
+import { AgentNotificationsBridge } from "@/modules/agents";
 import {
   CommandPalette,
   createCommandPaletteActions,
@@ -28,11 +30,8 @@ import {
   type SearchInlineHandle,
   type SearchTarget,
 } from "@/modules/header";
-import {
-  PI_TERMINAL_LEAF_ID,
-  PiPanel,
-  usePiPanelModeStore,
-} from "@/modules/pi-agent";
+import { PiPanel } from "@/modules/pi-agent";
+import { PetOverlayBridge } from "@/modules/pi-agent/PetOverlayBridge";
 import type { PreviewPaneHandle } from "@/modules/preview";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
 import { SearchPanel } from "@/modules/search";
@@ -90,6 +89,8 @@ export default function App() {
     tabs,
     activeId,
     setActiveId,
+    secondaryId,
+    setSecondaryId,
     openFileTab,
     pinTab,
     newPreviewTab,
@@ -105,13 +106,14 @@ export default function App() {
     closeTab,
     updateTab,
     selectByIndex,
+    toggleSplitEditor,
+    closeSplit,
     resetWorkspace,
   } = useTabs();
 
   const dock = useTerminalDock(getLaunchDir() ?? undefined);
   const { dockRef, dockOpen, toggleDock, openDock, handleDockResize } =
     useTerminalDockPanel(true);
-  const piPanelMode = usePiPanelModeStore((s) => s.mode);
 
   // Mirror `tabs` into a ref so callbacks scheduled with `setTimeout`
   // (e.g. cdInNewTab) read the latest pane state instead of a stale closure.
@@ -139,7 +141,6 @@ export default function App() {
 
   const clearWorkspaceState = useCallback(() => {
     for (const id of liveLeavesRef.current) disposeSession(id);
-    disposeSession(PI_TERMINAL_LEAF_ID);
     searchAddons.current.clear();
     terminalRefs.current.clear();
     editorRefs.current.clear();
@@ -225,14 +226,11 @@ export default function App() {
   }, [activeId, dock.activeLeafId]);
 
   // An annotation draft from a web preview should surface in the Pi chat
-  // composer: open the right panel in chat mode when one is staged.
+  // composer: open the right panel when one is staged.
   useEffect(
     () =>
       usePreviewAnnotateDraftStore.subscribe((state) => {
-        if (state.pending) {
-          openRightPanel();
-          usePiPanelModeStore.getState().setMode("chat");
-        }
+        if (state.pending) openRightPanel();
       }),
     [openRightPanel],
   );
@@ -306,6 +304,20 @@ export default function App() {
       setActiveId(tabs[nextIdx].id);
     },
     [tabs, activeId, setActiveId],
+  );
+
+  // Selecting the tab shown in the secondary pane swaps the two panes so the
+  // clicked tab becomes primary. Any other tab just moves the primary slot.
+  const handleSelectTab = useCallback(
+    (id: number) => {
+      if (secondaryId !== null && id === secondaryId) {
+        setActiveId(id);
+        setSecondaryId(activeId);
+        return;
+      }
+      setActiveId(id);
+    },
+    [secondaryId, activeId, setActiveId, setSecondaryId],
   );
 
   const sendCd = useCallback(
@@ -527,6 +539,11 @@ export default function App() {
       "view.zenMode": () => setZenMode((v) => !v),
       "editor.undo": () => editorRefs.current.get(activeId)?.undo(),
       "editor.redo": () => editorRefs.current.get(activeId)?.redo(),
+      "editor.split": () => {
+        if (!toggleSplitEditor()) {
+          toast("Open a second file to split the editor");
+        }
+      },
     }),
     [
       activeId,
@@ -541,6 +558,7 @@ export default function App() {
       toggleDock,
       toggleSidebar,
       toggleExplorerFocus,
+      toggleSplitEditor,
       zoomIn,
       zoomOut,
       zoomReset,
@@ -551,6 +569,10 @@ export default function App() {
     (id: ShortcutId, e: KeyboardEvent) => {
       if (id === "editor.undo" || id === "editor.redo") {
         return activeTab?.kind !== "editor";
+      }
+      if (id === "editor.split") {
+        const editors = tabs.filter((t) => t.kind === "editor").length;
+        return secondaryId === null && editors < 2;
       }
       if (id === "terminal.clear") {
         const target =
@@ -567,7 +589,7 @@ export default function App() {
       }
       return false;
     },
-    [activeTab],
+    [activeTab, tabs, secondaryId],
   );
 
   useGlobalShortcuts(shortcutHandlers, { isDisabled: shortcutsDisabled });
@@ -630,16 +652,11 @@ export default function App() {
   }, [explorerRoot, home, resetWorkspace, dock]);
 
   const onActivateAgent = useCallback(
-    (surface: AgentSurface, leafId: number) => {
-      if (surface === "dock") {
-        openDock();
-        dock.focusPane(leafId);
-      } else {
-        openRightPanel();
-        usePiPanelModeStore.getState().setMode("terminal");
-      }
+    (leafId: number) => {
+      openDock();
+      dock.focusPane(leafId);
     },
-    [openDock, dock, openRightPanel],
+    [openDock, dock],
   );
 
   const handleDockLeafExit = useCallback(
@@ -710,6 +727,8 @@ export default function App() {
             splitPaneDown: () => splitDock("col"),
             focusNextPane: () => dock.focusNext(1),
             focusPreviousPane: () => dock.focusNext(-1),
+            editorSplitActive: secondaryId !== null,
+            toggleEditorSplit: () => void toggleSplitEditor(),
             focusSearch: () => searchInlineRef.current?.focus(),
             focusExplorerSearch: () => explorerRef.current?.focusSearch(),
             toggleSidebar,
@@ -721,6 +740,8 @@ export default function App() {
       commandPaletteOpen,
       tabs,
       activeId,
+      secondaryId,
+      toggleSplitEditor,
       searchTarget,
       explorerRoot,
       home,
@@ -746,7 +767,7 @@ export default function App() {
             <Header
               tabs={tabs}
               activeId={activeId}
-              onSelect={setActiveId}
+              onSelect={handleSelectTab}
               onNewPreview={() => openPreviewTab("")}
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
@@ -757,6 +778,8 @@ export default function App() {
               onToggleSidebar={toggleSidebar}
               onTogglePiPanel={onTogglePiPanel}
               piPanelOpen={rightPanelOpen || activeTab?.kind === "pi"}
+              onToggleDock={toggleDock}
+              dockOpen={dockOpen}
               onSplitDock={splitDock}
               canSplitDock={dock.paneCount < MAX_DOCK_PANES}
               onActivateAgent={onActivateAgent}
@@ -786,32 +809,38 @@ export default function App() {
               >
                 <div className="flex h-full min-h-0 flex-col border-r border-border/60 bg-card">
                   <div className="min-h-0 flex-1">
-                    {sidebarView === "explorer" ? (
-                      <FileExplorer
-                        ref={explorerRef}
-                        rootPath={explorerRoot}
-                        activeFilePath={explorerActiveFilePath}
-                        onOpenFile={handleOpenFile}
-                        onPathRenamed={handlePathRenamed}
-                        onPathDeleted={handlePathDeleted}
-                        onRevealInTerminal={cdInNewTab}
-                        onOpenMarkdownPreview={openMarkdownPreview}
-                        onOpenHtmlPreview={openHtmlPreview}
-                      />
-                    ) : sidebarView === "search" ? (
-                      <SearchPanel
-                        rootPath={explorerRoot}
-                        onOpenResult={handleOpenSearchResult}
-                      />
-                    ) : (
-                      <SourceControlPanel
-                        open
-                        sourceControl={sourceControl}
-                        onOpenDiff={openGitDiffTab}
-                        onOpenGitGraph={openGitGraphFromContext}
-                        onOpenFile={handleOpenFile}
-                      />
-                    )}
+                    <ErrorBoundary
+                      label="Sidebar"
+                      resetKey={sidebarView}
+                      inline
+                    >
+                      {sidebarView === "explorer" ? (
+                        <FileExplorer
+                          ref={explorerRef}
+                          rootPath={explorerRoot}
+                          activeFilePath={explorerActiveFilePath}
+                          onOpenFile={handleOpenFile}
+                          onPathRenamed={handlePathRenamed}
+                          onPathDeleted={handlePathDeleted}
+                          onRevealInTerminal={cdInNewTab}
+                          onOpenMarkdownPreview={openMarkdownPreview}
+                          onOpenHtmlPreview={openHtmlPreview}
+                        />
+                      ) : sidebarView === "search" ? (
+                        <SearchPanel
+                          rootPath={explorerRoot}
+                          onOpenResult={handleOpenSearchResult}
+                        />
+                      ) : (
+                        <SourceControlPanel
+                          open
+                          sourceControl={sourceControl}
+                          onOpenDiff={openGitDiffTab}
+                          onOpenGitGraph={openGitGraphFromContext}
+                          onOpenFile={handleOpenFile}
+                        />
+                      )}
+                    </ErrorBoundary>
                   </div>
                   <SidebarRail
                     activeView={sidebarView}
@@ -825,20 +854,24 @@ export default function App() {
                 <ResizablePanelGroup orientation="vertical" className="h-full">
                   <ResizablePanel id="editor-area" minSize="20%">
                     <div className="relative h-full min-h-0">
-                      <WorkspaceSurface
-                        tabs={tabs}
-                        activeId={activeId}
-                        activeTab={activeTab}
-                        registerEditorHandle={registerEditorHandle}
-                        onEditorDirtyChange={handleEditorDirty}
-                        onEditorCloseTab={disposeTab}
-                        registerPreviewHandle={registerPreviewHandle}
-                        onPreviewUrlChange={handlePreviewUrl}
-                        onOpenCommitFile={openCommitFileDiffTab}
-                        onGitHistorySearchHandle={setGitHistoryHandle}
-                        piCwd={explorerRoot}
-                        piWorkspace={workspaceEnv}
-                      />
+                      <ErrorBoundary label="Editor" resetKey={activeId} inline>
+                        <WorkspaceSurface
+                          tabs={tabs}
+                          activeId={activeId}
+                          secondaryId={secondaryId}
+                          activeTab={activeTab}
+                          registerEditorHandle={registerEditorHandle}
+                          onEditorDirtyChange={handleEditorDirty}
+                          onEditorCloseTab={disposeTab}
+                          onCloseSplit={closeSplit}
+                          registerPreviewHandle={registerPreviewHandle}
+                          onPreviewUrlChange={handlePreviewUrl}
+                          onOpenCommitFile={openCommitFileDiffTab}
+                          onGitHistorySearchHandle={setGitHistoryHandle}
+                          piCwd={explorerRoot}
+                          piWorkspace={workspaceEnv}
+                        />
+                      </ErrorBoundary>
                     </div>
                   </ResizablePanel>
                   {dockOpen ? <ResizableHandle withHandle /> : null}
@@ -853,32 +886,34 @@ export default function App() {
                     onResize={(size) => handleDockResize(size.inPixels)}
                   >
                     <div className="flex h-full min-h-0 flex-col border-t border-border/60 bg-card">
-                      {dockOpen ? (
-                        <>
-                          <TerminalDockHeader
-                            cwd={dock.activeCwd}
-                            canSplit={dock.paneCount < MAX_DOCK_PANES}
-                            onSplit={dock.splitActive}
-                            onClear={() => clearSession(dock.activeLeafId)}
-                            onHide={toggleDock}
-                          />
-                          <div className="min-h-0 flex-1 px-3 pt-2 pb-2">
-                            <TerminalDockView
-                              tree={dock.tree}
-                              activeLeafId={dock.activeLeafId}
-                              paneCount={dock.paneCount}
-                              registerHandle={registerTerminalHandle}
-                              onSearchReady={handleSearchReady}
-                              onCwd={handleDockCwd}
-                              onExit={handleDockLeafExit}
-                              onFocusLeaf={handleDockFocusLeaf}
-                              onClosePane={(leafId) =>
-                                void closeDockPaneGuarded(leafId)
-                              }
+                      <ErrorBoundary label="Terminal" inline>
+                        {dockOpen ? (
+                          <>
+                            <TerminalDockHeader
+                              cwd={dock.activeCwd}
+                              canSplit={dock.paneCount < MAX_DOCK_PANES}
+                              onSplit={dock.splitActive}
+                              onClear={() => clearSession(dock.activeLeafId)}
+                              onHide={toggleDock}
                             />
-                          </div>
-                        </>
-                      ) : null}
+                            <div className="min-h-0 flex-1 px-3 pt-2 pb-2">
+                              <TerminalDockView
+                                tree={dock.tree}
+                                activeLeafId={dock.activeLeafId}
+                                paneCount={dock.paneCount}
+                                registerHandle={registerTerminalHandle}
+                                onSearchReady={handleSearchReady}
+                                onCwd={handleDockCwd}
+                                onExit={handleDockLeafExit}
+                                onFocusLeaf={handleDockFocusLeaf}
+                                onClosePane={(leafId) =>
+                                  void closeDockPaneGuarded(leafId)
+                                }
+                              />
+                            </div>
+                          </>
+                        ) : null}
+                      </ErrorBoundary>
                     </div>
                   </ResizablePanel>
                 </ResizablePanelGroup>
@@ -896,7 +931,9 @@ export default function App() {
               >
                 <div className="h-full min-h-0 border-l border-border/60 bg-card">
                   {rightPanelOpen && !piTab ? (
-                    <PiPanel cwd={explorerRoot} workspace={workspaceEnv} />
+                    <ErrorBoundary label="Pi" inline>
+                      <PiPanel cwd={explorerRoot} workspace={workspaceEnv} />
+                    </ErrorBoundary>
                   ) : null}
                 </div>
               </ResizablePanel>
@@ -910,8 +947,6 @@ export default function App() {
               home={home}
               onCd={sendCd}
               onWorkspaceChange={switchWorkspace}
-              onToggleDock={toggleDock}
-              dockOpen={dockOpen}
             />
           )}
 
@@ -919,9 +954,9 @@ export default function App() {
             dockTree={dock.tree}
             dockOpen={dockOpen}
             dockActiveLeafId={dock.activeLeafId}
-            piPanelVisible={rightPanelOpen && piPanelMode === "terminal"}
             onActivate={onActivateAgent}
           />
+          <PetOverlayBridge />
           <Toaster position="bottom-right" />
 
           <CommandPalette

@@ -4,7 +4,6 @@ import {
   indentUnit,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { lintGutter } from "@codemirror/lint";
 import { search } from "@codemirror/search";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -68,6 +67,9 @@ export const languageCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const wrapCompartment = new Compartment();
 export const vimCompartment = new Compartment();
+// Holds the optional external-linter extension (gutter + linter source). Empty
+// unless the user turns on inline diagnostics, so it costs nothing by default.
+export const lintCompartment = new Compartment();
 
 // Only what basicSetup doesn't already cover, to avoid duplicate extensions.
 // basicSetup gives us line numbers, fold gutter, history, indentOnInput,
@@ -78,7 +80,6 @@ export function buildSharedExtensions(): Extension[] {
     indentUnit.of("  "),
     EditorState.tabSize.of(2),
     search({ top: true }),
-    lintGutter(),
     syntaxHighlighting(fallbackHighlightStyle, { fallback: true }),
     EditorView.theme({
       "&, &.cm-editor, &.cm-editor.cm-focused": {
@@ -100,9 +101,6 @@ export function buildSharedExtensions(): Extension[] {
       ".cm-gutters": {
         backgroundColor: "transparent !important",
         color: "var(--muted-foreground)",
-      },
-      ".cm-gutter-lint": {
-        width: "0px",
       },
       ".cm-gutter": { backgroundColor: "transparent !important" },
       ".cm-lineNumbers .cm-gutterElement": {

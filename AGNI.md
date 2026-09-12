@@ -39,8 +39,11 @@ Verify before claiming done: `pnpm lint`, `pnpm check-types`, `pnpm test`, `carg
 - `pty::pty_*` — long-lived interactive PTY sessions (xterm ↔ portable-pty), managed by `PtyState` (`RwLock<HashMap<id, Session>>`). Output streams via a Tauri `Channel<PtyEvent>`.
 - `fs::tree::*`, `fs::file::*`, `fs::mutate::*`: file explorer + editor IO.
 - `fs::search::*`, `fs::grep::*`: fuzzy file finder + content search (powered by `ignore` + `grep-*` crates).
+- `fs::replace::fs_replace`: project-wide regex replace. `dryRun` previews matches, apply writes atomically and emits `fs:file-written` so open editors reload.
 - `git::commands::*`: full source-control surface. All gated through the workspace authorization registry.
 - `shell::shell_run_command`: one-shot subshell exec. On Windows via PowerShell, on Unix via `$SHELL -lc`.
+- `shell::run_stdin_command`: runs one program directly with a buffer piped to stdin. Used by the opt-in external linter; same authorization and timeout rules.
+- `format::format_text`: opt-in format-on-save. Pipes the buffer to a formatter already on PATH (biome, prettier, rustfmt, gofmt, ruff) and returns stdout; no-ops when the tool is absent.
 - `workspace::*`: `workspace_authorize` / `workspace_current_dir` plus the WSL bridge.
 - `agent::*`: Claude Code hook installer (writes OSC 777 notification hooks into `~/.claude/settings.json`).
 - `pick_folder::pick_folder`: native OS folder picker dialog for "Open Folder".
@@ -61,13 +64,16 @@ PTY shells are bootstrapped via injected init scripts in `src-tauri/src/modules/
 
 Single-window React app. Path alias `@/*` → `src/*`. Tabs are a tagged union (`kind`: `terminal` | `editor` | `preview` | `markdown` | `git-diff` | `git-history` | `git-commit-file`) and **not** unmounted on switch — they're hidden via `invisible pointer-events-none`.
 
+Every pane sits under a `ErrorBoundary` (`src/components/ErrorBoundary.tsx`) and uncaught errors funnel through `reportError` (`src/lib/errors.ts`), which logs to console + the native log and raises a throttled toast.
+
 ### Module layout
 
 - **terminal/** — `TerminalStack` with xterm.js WebGL renderer. `osc-handlers.ts` parses OSC 7 + OSC 133. The xterm color palette is driven by the central theme engine.
-- **editor/** — CodeMirror 6. Supports vim mode and prebuilt themes.
+- **editor/** — CodeMirror 6. Supports vim mode, prebuilt themes, an optional two-pane split (`editor.split`, Mod+\\), opt-in format-on-save, and opt-in inline diagnostics from an external linter (`lib/externalDiagnostics.ts`). Both opt-ins are preferences that default off.
 - **explorer/** — file tree with Catppuccin icons, fuzzy search, keyboard nav.
+- **search/** — workspace content search (`fs_grep`) with a toggleable replace row backed by `fs_replace` (preview then apply).
 - **preview/** — auto-detected dev-server preview tab.
-- **tabs/** — `useTabs` is source of truth for tab list + active id.
+- **tabs/** — `useTabs` is source of truth for tab list + active id, plus `secondaryId` for the editor split.
 - **header/** — top bar + inline search. `NotificationBell` for agent alerts.
 - **statusbar/** — bottom bar, `CwdBreadcrumb`, workspace env selector.
 - **shortcuts/** — keymap registry + `useGlobalShortcuts`.

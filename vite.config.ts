@@ -53,6 +53,7 @@ export default defineConfig(async ({ mode }) => ({
       input: {
         main: path.resolve(__dirname, "index.html"),
         settings: path.resolve(__dirname, "settings.html"),
+        pet: path.resolve(__dirname, "pet.html"),
       },
       output: {
         manualChunks(id: string) {

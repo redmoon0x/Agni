@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { reportError } from "@/lib/errors";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
@@ -306,7 +307,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         await invoke(cmd, { path, workspace: currentWorkspaceEnv() });
         await fetchChildren(pendingCreate.parentPath);
       } catch (e) {
-        console.error(`${cmd} failed:`, e);
+        reportError("Create failed", e);
       } finally {
         setPendingCreate(null);
       }
@@ -341,7 +342,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         options?.onPathRenamed?.(renaming, to);
         await fetchChildren(parent);
       } catch (e) {
-        console.error("fs_rename failed:", e);
+        reportError("Rename failed", e);
       } finally {
         setRenaming(null);
       }
@@ -356,7 +357,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         options?.onPathDeleted?.(path);
         await fetchChildren(dirname(path));
       } catch (e) {
-        console.error("fs_delete failed:", e);
+        reportError("Delete failed", e);
       }
     },
     [fetchChildren, options],

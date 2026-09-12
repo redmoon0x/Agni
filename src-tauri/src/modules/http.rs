@@ -35,8 +35,7 @@ pub async fn http_request(
     on_event: Channel<HttpEvent>,
 ) -> Result<(), String> {
     let method = method.to_uppercase();
-    let parsed = reqwest::Url::parse(&url)
-        .map_err(|e| format!("invalid URL: {e}"))?;
+    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("invalid URL: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => return Err(format!("unsupported scheme: {other}")),

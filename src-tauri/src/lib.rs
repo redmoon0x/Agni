@@ -1,6 +1,6 @@
 pub mod modules;
 
-use modules::{agent, fs, git, http, pi, pick_folder, pty, shell, workspace};
+use modules::{agent, format, fs, git, http, pets, pi, pick_folder, pty, shell, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
@@ -96,7 +96,65 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
         }
     }
 
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+
     Ok(())
+}
+
+#[tauri::command]
+async fn pet_overlay_show(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("pet") {
+        window.show().map_err(|error| error.to_string())?;
+        window
+            .set_always_on_top(true)
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let builder = WebviewWindowBuilder::new(&app, "pet", WebviewUrl::App("pet.html".into()))
+        .title("Agni Pet")
+        .inner_size(116.0, 128.0)
+        .min_inner_size(116.0, 128.0)
+        .max_inner_size(116.0, 128.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false);
+
+    let window = builder.build().map_err(|error| error.to_string())?;
+    window.center().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn pet_overlay_hide(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("pet") {
+        window.close().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn window_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn window_toggle_maximize(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())
+    } else {
+        window.maximize().map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+async fn window_close(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -141,6 +199,7 @@ pub fn run() {
         })
         .manage(pty::PtyState::default())
         .manage(pi::PiState::default())
+        .manage(format::FormatState::default())
         .manage(fs::watch::FsWatchState::default())
         .manage({
             let registry = workspace::WorkspaceRegistry::default();
@@ -162,6 +221,14 @@ pub fn run() {
             pi::pi_stop,
             pi::pi_close_all,
             pi::pi_list_sessions,
+            pets::pets_list,
+            pets::pets_sprite,
+            pets::pets_import,
+            pets::pets_install_catalog,
+            pets::pets_remove,
+            window_minimize,
+            window_toggle_maximize,
+            window_close,
             pty::pty_has_foreground_process,
             fs::tree::list_subdirs,
             fs::tree::fs_read_dir,
@@ -181,6 +248,7 @@ pub fn run() {
             fs::search::fs_list_files,
             fs::grep::fs_grep,
             fs::grep::fs_glob,
+            fs::replace::fs_replace,
             http::http_request,
             git::commands::git_resolve_repo,
             git::commands::git_panel_snapshot,
@@ -204,6 +272,8 @@ pub fn run() {
             git::commands::git_commit_file_diff,
             git::commands::git_remote_url,
             shell::shell_run_command,
+            shell::run_stdin_command,
+            format::format_text,
             workspace::wsl_list_distros,
             workspace::wsl_default_distro,
             workspace::wsl_home,
@@ -214,6 +284,8 @@ pub fn run() {
             pick_folder::pick_folder,
             get_launch_dir,
             open_settings_window,
+            pet_overlay_show,
+            pet_overlay_hide,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

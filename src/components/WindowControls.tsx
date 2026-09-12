@@ -7,8 +7,10 @@ import {
   SquareIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 type Props = {
   /** Render only the close button (used by the settings window). */
@@ -17,7 +19,6 @@ type Props = {
 
 export function WindowControls({ closeOnly = false }: Props) {
   const [maximized, setMaximized] = useState(false);
-
   useEffect(() => {
     if (!USE_CUSTOM_WINDOW_CONTROLS || closeOnly) return;
     const w = getCurrentWindow();
@@ -35,18 +36,29 @@ export function WindowControls({ closeOnly = false }: Props) {
 
   if (!USE_CUSTOM_WINDOW_CONTROLS) return null;
 
-  const w = getCurrentWindow();
+  const runWindowAction = async (command: string) => {
+    try {
+      await invoke(command);
+    } catch (error) {
+      toast.error("Could not control this window", {
+        description: String(error),
+      });
+    }
+  };
 
   return (
     <div className="flex h-full shrink-0 items-center gap-0.5 pr-1">
       {!closeOnly && (
         <>
-          <CtlButton ariaLabel="Minimize" onClick={() => void w.minimize()}>
+          <CtlButton
+            ariaLabel="Minimize"
+            onClick={() => void runWindowAction("window_minimize")}
+          >
             <HugeiconsIcon icon={MinusSignIcon} size={12} strokeWidth={2} />
           </CtlButton>
           <CtlButton
             ariaLabel={maximized ? "Restore" : "Maximize"}
-            onClick={() => void w.toggleMaximize()}
+            onClick={() => void runWindowAction("window_toggle_maximize")}
           >
             <HugeiconsIcon
               icon={maximized ? Copy01Icon : SquareIcon}
@@ -56,7 +68,11 @@ export function WindowControls({ closeOnly = false }: Props) {
           </CtlButton>
         </>
       )}
-      <CtlButton ariaLabel="Close" onClick={() => void w.close()} danger>
+      <CtlButton
+        ariaLabel="Close"
+        onClick={() => void runWindowAction("window_close")}
+        danger
+      >
         <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
       </CtlButton>
     </div>
@@ -79,7 +95,12 @@ function CtlButton({
       type="button"
       aria-label={ariaLabel}
       title={ariaLabel}
-      onClick={onClick}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
       className={cn(
         "grid size-7 place-items-center rounded-md text-muted-foreground transition-colors",
         danger
@@ -91,3 +112,4 @@ function CtlButton({
     </button>
   );
 }
+

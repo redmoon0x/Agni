@@ -24,6 +24,8 @@ import {
   setAutostart,
   setEditorAutoSave,
   setEditorAutoSaveDelay,
+  setEditorFormatOnSave,
+  setEditorInlineDiagnostics,
   setShowHidden,
   setTerminalFontFamily,
   setTerminalLetterSpacing,
@@ -70,6 +72,10 @@ export function GeneralSection() {
   const vimMode = usePreferencesStore((s) => s.vimMode);
   const editorAutoSave = usePreferencesStore((s) => s.editorAutoSave);
   const editorAutoSaveDelay = usePreferencesStore((s) => s.editorAutoSaveDelay);
+  const editorFormatOnSave = usePreferencesStore((s) => s.editorFormatOnSave);
+  const editorInlineDiagnostics = usePreferencesStore(
+    (s) => s.editorInlineDiagnostics,
+  );
   const showHidden = usePreferencesStore((s) => s.showHidden);
   const terminalWebglEnabled = usePreferencesStore(
     (s) => s.terminalWebglEnabled,
@@ -188,6 +194,24 @@ export function GeneralSection() {
             onChange={(v) => void setEditorAutoSaveDelay(v)}
           />
         )}
+        <SettingRow
+          title="Format on save"
+          description="Run a formatter already on your PATH (biome, prettier, rustfmt, gofmt, ruff) before saving. Does nothing when the matching tool is not installed."
+        >
+          <Switch
+            checked={editorFormatOnSave}
+            onCheckedChange={(v) => void setEditorFormatOnSave(v)}
+          />
+        </SettingRow>
+        <SettingRow
+          title="Inline diagnostics"
+          description="Show lint errors in the editor gutter using a linter already on your PATH (biome, eslint, ruff). Off by default; nothing runs until it is enabled."
+        >
+          <Switch
+            checked={editorInlineDiagnostics}
+            onCheckedChange={(v) => void setEditorInlineDiagnostics(v)}
+          />
+        </SettingRow>
       </div>
 
       <div className="flex flex-col gap-2">

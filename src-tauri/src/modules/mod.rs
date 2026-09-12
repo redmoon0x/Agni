@@ -1,7 +1,9 @@
 pub mod agent;
+pub mod format;
 pub mod fs;
 pub mod git;
 pub mod http;
+pub mod pets;
 pub mod pi;
 pub mod pick_folder;
 pub mod proc;

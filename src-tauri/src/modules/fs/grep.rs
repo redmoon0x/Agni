@@ -238,7 +238,7 @@ pub fn fs_glob(
     Ok(GlobResponse { hits, truncated })
 }
 
-fn display_path(
+pub(crate) fn display_path(
     path: &std::path::Path,
     root_path: &std::path::Path,
     root_display: &str,

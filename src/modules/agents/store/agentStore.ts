@@ -3,7 +3,6 @@ import type {
   AgentNotification,
   AgentSession,
   AgentStatus,
-  AgentSurface,
   LocalAgentState,
 } from "../lib/types";
 
@@ -15,7 +14,7 @@ type AgentStoreState = {
   sessions: Record<number, AgentSession>;
   localAgent: LocalAgentState;
   notifications: AgentNotification[];
-  start: (leafId: number, surface: AgentSurface, agent: string) => void;
+  start: (leafId: number, agent: string) => void;
   setStatus: (leafId: number, status: AgentStatus) => void;
   finish: (leafId: number) => void;
   setLocalAgent: (state: LocalAgentState) => void;
@@ -31,7 +30,7 @@ export const useAgentStore = create<AgentStoreState>((set) => ({
   localAgent: null,
   notifications: [],
 
-  start: (leafId, surface, agent) =>
+  start: (leafId, agent) =>
     set((s) => {
       const now = Date.now();
       return {
@@ -39,7 +38,6 @@ export const useAgentStore = create<AgentStoreState>((set) => ({
           ...s.sessions,
           [leafId]: {
             leafId,
-            surface,
             agent,
             status: "working",
             startedAt: now,

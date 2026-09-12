@@ -61,6 +61,8 @@ export type CommandPaletteActionContext = {
   splitPaneDown: () => void;
   focusNextPane: () => void;
   focusPreviousPane: () => void;
+  editorSplitActive: boolean;
+  toggleEditorSplit: () => void;
   focusSearch: () => void;
   focusExplorerSearch: () => void;
   toggleSidebar: () => void;
@@ -77,6 +79,11 @@ export function createCommandPaletteActions(
     ctx.dockPaneCount >= MAX_DOCK_PANES ? "Pane limit" : undefined;
   const focusPaneDisabledReason =
     !ctx.dockOpen || ctx.dockPaneCount < 2 ? "Only one pane" : undefined;
+  const editorCount = ctx.tabs.filter((t) => t.kind === "editor").length;
+  const editorSplitDisabledReason =
+    !ctx.editorSplitActive && editorCount < 2
+      ? "Open two editors"
+      : undefined;
   const closeDisabledReason = onlyOneTab ? "Last tab" : undefined;
 
   return [
@@ -206,6 +213,16 @@ export function createCommandPaletteActions(
       shortcutId: "pane.focusPrev",
       disabledReason: focusPaneDisabledReason,
       run: ctx.focusPreviousPane,
+    },
+    {
+      id: "editor.split",
+      label: ctx.editorSplitActive ? "Close editor split" : "Split editor",
+      group: "Panes",
+      keywords: ["editor", "split", "side", "columns", "compare"],
+      icon: LayoutTwoColumnIcon,
+      shortcutId: "editor.split",
+      disabledReason: editorSplitDisabledReason,
+      run: ctx.toggleEditorSplit,
     },
     {
       id: "sidebar.toggle",

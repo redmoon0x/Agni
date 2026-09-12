@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { reportError } from "@/lib/errors";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 
@@ -7,6 +8,8 @@ type ReadResult =
   | { kind: "text"; content: string; size: number }
   | { kind: "binary"; size: number }
   | { kind: "toolarge"; size: number; limit: number };
+
+type FormatResult = { content: string; formatted: boolean };
 
 export type DocumentState =
   | { status: "loading" }
@@ -26,6 +29,7 @@ export function useDocument({ path, onDirtyChange }: Options) {
 
   const autoSave = usePreferencesStore((s) => s.editorAutoSave);
   const autoSaveDelay = usePreferencesStore((s) => s.editorAutoSaveDelay);
+  const formatOnSave = usePreferencesStore((s) => s.editorFormatOnSave);
 
   // Track the saved buffer so we can detect changes cheaply.
   const savedRef = useRef<string>("");
@@ -38,6 +42,9 @@ export function useDocument({ path, onDirtyChange }: Options) {
   const autoSaveRef = useRef({ autoSave, autoSaveDelay });
   autoSaveRef.current = { autoSave, autoSaveDelay };
 
+  const formatOnSaveRef = useRef(formatOnSave);
+  formatOnSaveRef.current = formatOnSave;
+
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearAutoSaveTimer = useCallback(() => {
@@ -48,7 +55,26 @@ export function useDocument({ path, onDirtyChange }: Options) {
   }, []);
 
   const saveNow = useCallback(async () => {
-    const content = bufferRef.current;
+    let content = bufferRef.current;
+
+    if (formatOnSaveRef.current) {
+      try {
+        const res = await invoke<FormatResult>("format_text", {
+          path,
+          content,
+          workspace: currentWorkspaceEnv(),
+        });
+        if (res.formatted && res.content !== content) {
+          content = res.content;
+          bufferRef.current = content;
+          setDoc((d) => (d.status === "ready" ? { ...d, content } : d));
+        }
+      } catch (e) {
+        // Best effort: a formatter failure must never block the save.
+        reportError("Format failed", e, { silent: true });
+      }
+    }
+
     await invoke("fs_write_file", {
       path,
       content,
@@ -146,7 +172,7 @@ export function useDocument({ path, onDirtyChange }: Options) {
       const { autoSave: active, autoSaveDelay: delay } = autoSaveRef.current;
       if (active && isDirty) {
         timeoutRef.current = setTimeout(() => {
-          saveNow().catch((e) => console.error("[autosave]", e));
+          saveNow().catch((e) => reportError("Autosave failed", e));
         }, delay);
       }
     },

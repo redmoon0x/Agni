@@ -15,11 +15,11 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
 import { AgentIcon } from "../lib/agentIcon";
-import type { AgentNotification, AgentStatus, AgentSurface } from "../lib/types";
+import type { AgentNotification, AgentStatus } from "../lib/types";
 import { useAgentStore } from "../store/agentStore";
 
 type Props = {
-  onActivate: (surface: AgentSurface, leafId: number) => void;
+  onActivate: (leafId: number) => void;
 };
 
 function relativeTime(ts: number): string {
@@ -159,13 +159,13 @@ export function NotificationBell({ onActivate }: Props) {
     }
   };
 
-  const activate = (surface: AgentSurface, leafId: number) => {
-    onActivate(surface, leafId);
+  const activate = (leafId: number) => {
+    onActivate(leafId);
     setOpen(false);
   };
 
   const activateNotification = (n: AgentNotification) => {
-    activate(n.surface, n.leafId);
+    activate(n.leafId);
   };
 
   const empty = activeCount === 0 && notifications.length === 0;
@@ -220,7 +220,7 @@ export function NotificationBell({ onActivate }: Props) {
                 key={s.leafId}
                 agent={s.agent}
                 status={s.status}
-                onClick={() => activate(s.surface, s.leafId)}
+                onClick={() => activate(s.leafId)}
               />
             ))}
             {activeCount > 0 && notifications.length > 0 ? (

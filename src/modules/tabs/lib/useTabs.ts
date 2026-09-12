@@ -128,12 +128,41 @@ function titleFromUrl(url: string): string {
 export function useTabs() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState(0);
+  // Second editor pane. When non-null the editor area shows `activeId` and
+  // `secondaryId` side by side; null keeps the original single-pane layout.
+  const [secondaryId, setSecondaryId] = useState<number | null>(null);
   const nextIdRef = useRef(1);
   const tabsRef = useRef(tabs);
+  const activeIdRef = useRef(activeId);
+  const secondaryIdRef = useRef<number | null>(secondaryId);
 
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    secondaryIdRef.current = secondaryId;
+  }, [secondaryId]);
+
+  // Drop the split when its tab closes/changes kind, when it collides with the
+  // primary slot, or when fewer than two editors remain.
+  useEffect(() => {
+    if (secondaryId === null) return;
+    const sec = tabs.find((t) => t.id === secondaryId);
+    const editorCount = tabs.filter((t) => t.kind === "editor").length;
+    if (
+      !sec ||
+      sec.kind !== "editor" ||
+      sec.id === activeId ||
+      editorCount < 2
+    ) {
+      setSecondaryId(null);
+    }
+  }, [tabs, secondaryId, activeId]);
 
   /**
    * Opens a file in an editor tab.
@@ -539,6 +568,35 @@ export function useTabs() {
     );
   }, []);
 
+  /**
+   * Opens a second editor pane. The primary pane keeps the current editor tab
+   * and the split shows the next editor tab. Returns false when there aren't
+   * two editor tabs to show.
+   */
+  const splitEditor = useCallback((): boolean => {
+    const editors = tabsRef.current.filter(
+      (t): t is EditorTab => t.kind === "editor",
+    );
+    if (editors.length < 2) return false;
+    const active = activeIdRef.current;
+    const primary = editors.find((t) => t.id === active) ?? editors[0];
+    const other = editors.find((t) => t.id !== primary.id);
+    if (!other) return false;
+    if (primary.id !== active) setActiveId(primary.id);
+    setSecondaryId(other.id);
+    return true;
+  }, []);
+
+  const closeSplit = useCallback(() => setSecondaryId(null), []);
+
+  const toggleSplitEditor = useCallback((): boolean => {
+    if (secondaryIdRef.current !== null) {
+      setSecondaryId(null);
+      return true;
+    }
+    return splitEditor();
+  }, [splitEditor]);
+
   const selectByIndex = useCallback(
     (idx: number) => {
       const t = tabs[idx];
@@ -550,12 +608,15 @@ export function useTabs() {
   const resetWorkspace = useCallback(() => {
     setTabs([]);
     setActiveId(0);
+    setSecondaryId(null);
   }, []);
 
   return {
     tabs,
     activeId,
     setActiveId,
+    secondaryId,
+    setSecondaryId,
     openFileTab,
     pinTab,
     newPreviewTab,
@@ -571,6 +632,9 @@ export function useTabs() {
     closeTab,
     updateTab,
     selectByIndex,
+    splitEditor,
+    closeSplit,
+    toggleSplitEditor,
     resetWorkspace,
   };
 }

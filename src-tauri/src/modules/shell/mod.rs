@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
@@ -68,6 +69,135 @@ pub(crate) fn run_blocking_inner(
     dur: Duration,
 ) -> Result<CommandOutput, String> {
     run_blocking(command, cwd, workspace, dur)
+}
+
+/// Runs a program with `input` piped to stdin, for on-demand linters that read
+/// the buffer from stdin (`eslint --stdin`, `ruff check -`). Same authorization
+/// and timeout rules as `shell_run_command`. WSL is rejected because the tool
+/// would have to live inside the distro.
+#[tauri::command]
+pub async fn run_stdin_command(
+    program: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+    input: String,
+    timeout_secs: Option<u64>,
+    workspace: Option<WorkspaceEnv>,
+    registry: tauri::State<'_, WorkspaceRegistry>,
+) -> Result<CommandOutput, String> {
+    let program = program.trim().to_string();
+    if program.is_empty() {
+        return Err("empty program".into());
+    }
+    let workspace = WorkspaceEnv::from_option(workspace);
+    authorize_spawn_cwd(&registry, cwd.as_deref(), &workspace)?;
+    if workspace.is_wsl() {
+        return Err("WSL workspaces are not supported for stdin commands".into());
+    }
+
+    let dur = Duration::from_secs(
+        timeout_secs
+            .unwrap_or(DEFAULT_TIMEOUT_SECS)
+            .clamp(1, MAX_TIMEOUT_SECS),
+    );
+
+    let (tx, rx) = std::sync::mpsc::channel::<Result<CommandOutput, String>>();
+    thread::spawn(move || {
+        let _ = tx.send(run_program_with_stdin(
+            &program,
+            &args,
+            cwd.as_deref(),
+            input.as_bytes(),
+            dur,
+        ));
+    });
+
+    rx.recv().map_err(|e| e.to_string())?
+}
+
+/// Runs a single program directly (no shell) with `input` piped to stdin.
+/// Used for on-demand formatters, where a shell would mangle paths and the
+/// buffer must travel over stdin. A missing binary is reported as
+/// `not found: <program>` so callers can cache it.
+pub(crate) fn run_program_with_stdin(
+    program: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    input: &[u8],
+    dur: Duration,
+) -> Result<CommandOutput, String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    if let Some(dir) = cwd.filter(|s| !s.is_empty()) {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::modules::proc::hide_console(&mut cmd);
+
+    let child = Arc::new(match SharedChild::spawn(&mut cmd) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("not found: {program}"));
+        }
+        Err(e) => return Err(e.to_string()),
+    });
+
+    let mut stdin_pipe = child
+        .take_stdin()
+        .ok_or_else(|| "no stdin pipe".to_string())?;
+    let mut stdout_pipe = child.take_stdout().ok_or_else(|| {
+        let _ = child.kill();
+        "no stdout pipe".to_string()
+    })?;
+    let mut stderr_pipe = child.take_stderr().ok_or_else(|| {
+        let _ = child.kill();
+        "no stderr pipe".to_string()
+    })?;
+
+    // Write on a thread: a chatty formatter can fill the stdout pipe while we
+    // are still feeding stdin, which would deadlock a serial writer.
+    let input = input.to_vec();
+    let writer = thread::spawn(move || {
+        let _ = stdin_pipe.write_all(&input);
+        let _ = stdin_pipe.flush();
+        // Dropping stdin_pipe closes it so the program sees EOF.
+    });
+
+    let stdout_handle = thread::spawn(move || drain(&mut stdout_pipe));
+    let stderr_handle = thread::spawn(move || drain(&mut stderr_pipe));
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let waiter = Arc::clone(&child);
+    thread::spawn(move || {
+        let _ = tx.send(waiter.wait());
+    });
+
+    let (exit_code, timed_out) = match rx.recv_timeout(dur) {
+        Ok(Ok(status)) => (status.code(), false),
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            (None, true)
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            return Err("program wait thread disconnected".into());
+        }
+    };
+
+    let _ = writer.join();
+    let (stdout_bytes, stdout_truncated) = stdout_handle.join().unwrap_or((Vec::new(), false));
+    let (stderr_bytes, stderr_truncated) = stderr_handle.join().unwrap_or((Vec::new(), false));
+
+    Ok(CommandOutput {
+        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        exit_code,
+        timed_out,
+        truncated: stdout_truncated || stderr_truncated,
+    })
 }
 
 fn run_blocking(

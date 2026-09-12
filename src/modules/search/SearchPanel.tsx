@@ -1,11 +1,13 @@
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { reportError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { Cancel01Icon, Search01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
 import { PathIcon } from "@/modules/explorer/lib/PathIcon";
 
@@ -14,6 +16,12 @@ type GrepResponse = {
   hits: GrepHit[];
   truncated: boolean;
   files_scanned: number;
+};
+
+type ReplaceResponse = {
+  files: { path: string; rel: string; count: number }[];
+  total: number;
+  truncated: boolean;
 };
 
 const MIN_QUERY_LEN = 2;
@@ -49,6 +57,11 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
   const [truncated, setTruncated] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replacement, setReplacement] = useState("");
+  const [replacing, setReplacing] = useState(false);
+  // Bumped after a replace so the results re-run against the new file contents.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const active = query.trim().length >= MIN_QUERY_LEN;
 
@@ -62,14 +75,17 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
     }
     setSearching(true);
     let alive = true;
+    // `refreshKey` is a deliberate re-run trigger after a replace-all; it is
+    // read here so the dependency is honest to the lint rule.
+    void refreshKey;
     const handle = setTimeout(async () => {
       try {
         const res = await invoke<GrepResponse>("fs_grep", {
           pattern: query,
           root: rootPath,
           glob: includeGlob.trim() ? [includeGlob.trim()] : undefined,
-          case_insensitive: !caseSensitive,
-          max_results: MAX_RESULTS,
+          caseInsensitive: !caseSensitive,
+          maxResults: MAX_RESULTS,
           workspace: currentWorkspaceEnv(),
         });
         if (!alive) return;
@@ -89,7 +105,45 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
       alive = false;
       clearTimeout(handle);
     };
-  }, [query, includeGlob, caseSensitive, rootPath, active]);
+  }, [query, includeGlob, caseSensitive, rootPath, active, refreshKey]);
+
+  const replaceAll = async () => {
+    if (!rootPath || !active || replacing) return;
+    const glob = includeGlob.trim() ? [includeGlob.trim()] : undefined;
+    const base = {
+      pattern: query,
+      replacement,
+      root: rootPath,
+      glob,
+      caseInsensitive: !caseSensitive,
+      workspace: currentWorkspaceEnv(),
+    };
+    setReplacing(true);
+    try {
+      const preview = await invoke<ReplaceResponse>("fs_replace", {
+        args: { ...base, dryRun: true },
+      });
+      if (preview.total === 0) {
+        toast("No matches to replace");
+        return;
+      }
+      const confirmed = window.confirm(
+        `Replace ${preview.total} match(es) across ${preview.files.length} file(s)?`,
+      );
+      if (!confirmed) return;
+      const applied = await invoke<ReplaceResponse>("fs_replace", {
+        args: { ...base, dryRun: false },
+      });
+      toast.success(
+        `Replaced ${applied.total} match(es) in ${applied.files.length} file(s)`,
+      );
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      reportError("Replace all failed", e);
+    } finally {
+      setReplacing(false);
+    }
+  };
 
   const groups = useMemo(() => {
     const order: string[] = [];
@@ -155,12 +209,45 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
             ) : null}
           </div>
         </div>
-        <Input
-          value={includeGlob}
-          onChange={(e) => setIncludeGlob(e.target.value)}
-          placeholder="files to include (e.g. *.ts)"
-          className="h-6 text-[11px]"
-        />
+        <div className="flex items-center gap-1">
+          <Input
+            value={includeGlob}
+            onChange={(e) => setIncludeGlob(e.target.value)}
+            placeholder="files to include (e.g. *.ts)"
+            className="h-6 text-[11px]"
+          />
+          <button
+            type="button"
+            aria-expanded={replaceOpen}
+            onClick={() => setReplaceOpen((v) => !v)}
+            className={cn(
+              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              replaceOpen
+                ? "bg-primary/20 text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            Replace
+          </button>
+        </div>
+        {replaceOpen ? (
+          <div className="flex items-center gap-1">
+            <Input
+              value={replacement}
+              onChange={(e) => setReplacement(e.target.value)}
+              placeholder="replace with…"
+              className="h-6 text-[11px]"
+            />
+            <button
+              type="button"
+              disabled={!active || replacing}
+              onClick={() => void replaceAll()}
+              className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {replacing ? "…" : "All"}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">

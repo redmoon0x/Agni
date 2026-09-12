@@ -1,5 +1,6 @@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WindowControls } from "@/components/WindowControls";
+import { Toaster } from "@/components/ui/sonner";
 import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import type { SettingsTab } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
@@ -8,12 +9,14 @@ import {
   PaintBoardIcon,
   Settings01Icon,
   KeyboardIcon,
+  GameController02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { type JSX, useEffect, useState } from "react";
 import { AboutSection } from "./sections/AboutSection";
 import { GeneralSection } from "./sections/GeneralSection";
+import { PetsSection } from "./sections/PetsSection";
 import { ShortcutsSection } from "./sections/ShortcutsSection";
 import { ThemesSection } from "./sections/ThemesSection";
 
@@ -21,6 +24,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Settings01Icon, compo
   [
     { id: "general", label: "General", icon: Settings01Icon, component: GeneralSection },
     { id: "themes", label: "Themes", icon: PaintBoardIcon, component: ThemesSection },
+    { id: "pets", label: "Pets", icon: GameController02Icon, component: PetsSection },
     { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, component: ShortcutsSection },
     { id: "about", label: "About", icon: InformationCircleIcon, component: AboutSection },
   ];
@@ -28,6 +32,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Settings01Icon, compo
 const VALID_TABS: SettingsTab[] = [
   "general",
   "themes",
+  "pets",
   "shortcuts",
   "about",
 ];
@@ -72,11 +77,11 @@ export function SettingsApp() {
           }`}
       >
         <Tabs
+          data-tauri-drag-region
           value={active}
           onValueChange={(v) => setActive(v as SettingsTab)}
           orientation="horizontal"
           className="flex-1 items-center"
-          data-tauri-drag-region
         >
           <TabsList className="mx-auto h-7 bg-muted/40 px-2">
             {TABS.map((t) => (
@@ -99,6 +104,7 @@ export function SettingsApp() {
           {ActiveSection && <ActiveSection />}
         </div>
       </main>
+      <Toaster position="bottom-right" />
     </div>
   );
 }

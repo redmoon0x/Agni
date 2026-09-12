@@ -9,12 +9,24 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ReactDOM from "react-dom/client";
 import App from "./app/App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { reportError } from "./lib/errors";
 import { initLaunchDir } from "./lib/launchDir";
 import { USE_CUSTOM_WINDOW_CONTROLS } from "./lib/platform";
 
 if (USE_CUSTOM_WINDOW_CONTROLS) {
   document.documentElement.dataset.chrome = "borderless";
 }
+
+// Backstop for failures that never reach React: async invoke rejections, event
+// handler throws outside a boundary. Logged to the native log and surfaced
+// (throttled) so they are not invisible to the user.
+window.addEventListener("error", (e) => {
+  reportError("uncaught error", e.error ?? e.message, { silent: true });
+});
+window.addEventListener("unhandledrejection", (e) => {
+  reportError("unhandled rejection", e.reason, { silent: true });
+});
 
 // Render-instrumentation overlay, opt-in: `VITE_REACT_SCAN=true pnpm dev`.
 // Dev-only dynamic import so it never reaches the production bundle.
@@ -31,7 +43,9 @@ await invoke("pi_close_all").catch(() => {});
 await initLaunchDir();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <App />,
+  <ErrorBoundary label="Agni">
+    <App />
+  </ErrorBoundary>,
 );
 
 // Window starts hidden (per tauri.conf.json) so users never see a transparent

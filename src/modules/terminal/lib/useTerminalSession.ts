@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { reportError } from "@/lib/errors";
 import { ensureMonoFontsLoaded } from "@/lib/fonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { SearchAddon } from "@xterm/addon-search";
@@ -319,7 +320,7 @@ function attachSession(
       })
       .catch((e) => {
         s.ptyOpening = false;
-        console.error("[agni] openPty failed:", e);
+        reportError("Terminal failed to open", e);
       });
   }
 }
@@ -359,7 +360,7 @@ export async function respawnSession(
     pty = await openPtyForSession(leafId, s, cwd ?? s.initialCwd);
   } catch (e) {
     s.ptyOpening = false;
-    console.error("[agni] respawn openPty failed:", e);
+    reportError("Terminal failed to respawn", e);
     return;
   }
   s.ptyOpening = false;
@@ -378,7 +379,7 @@ export async function leafHasForegroundProcess(leafId: number): Promise<boolean>
     const result = await invoke<boolean>("pty_has_foreground_process", { id: s.pty.id });
     return result;
   } catch (e) {
-    console.error("[agni] pty_has_foreground_process failed for leaf", leafId, e);
+    reportError("Terminal foreground check failed", e, { silent: true });
     return false;
   }
 }
