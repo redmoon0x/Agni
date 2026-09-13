@@ -173,6 +173,17 @@ export async function stopPi(): Promise<void> {
   usePiStore.setState({ ...INITIAL_STORE, connection: "stopped" });
 }
 
+export async function suspendPi(): Promise<void> {
+  generation += 1;
+  if (sessionId !== null) {
+    await invoke("pi_stop", { sessionId }).catch(() => {});
+    sessionId = null;
+  }
+  activeClient.channel = null;
+  startPromise = null;
+  usePiStore.setState({ connection: "stopped" });
+}
+
 export async function restartPi(): Promise<void> {
   await stopPi();
   if (lastStart) await ensurePiStarted(lastStart.cwd, lastStart.workspace);

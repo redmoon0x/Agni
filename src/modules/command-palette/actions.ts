@@ -12,6 +12,7 @@ import {
   KeyboardIcon,
   LayoutTwoColumnIcon,
   LayoutTwoRowIcon,
+  Robot01Icon,
   Search01Icon,
   Settings01Icon,
   SidebarLeftIcon,
@@ -68,6 +69,7 @@ export type CommandPaletteActionContext = {
   toggleSidebar: () => void;
   openSettings: () => void;
   openShortcuts: () => void;
+  openAgentPanel: () => void;
 };
 
 export function createCommandPaletteActions(
@@ -123,6 +125,14 @@ export function createCommandPaletteActions(
       icon: TerminalIcon,
       shortcutId: "terminal.toggle",
       run: ctx.toggleDock,
+    },
+    {
+      id: "agent.open",
+      label: "Open agent panel",
+      group: "General",
+      keywords: ["pi", "opencode", "ai", "assistant", "agent"],
+      icon: Robot01Icon,
+      run: ctx.openAgentPanel,
     },
     {
       id: "tab.newEditor",

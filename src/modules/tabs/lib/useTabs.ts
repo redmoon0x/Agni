@@ -85,9 +85,9 @@ export type GitCommitFileDiffTab = {
   originalPath: string | null;
 };
 
-export type PiTab = {
+export type AgentTab = {
   id: number;
-  kind: "pi";
+  kind: "agent";
   title: string;
 };
 
@@ -102,7 +102,7 @@ export type Tab =
   | GitHistoryTab
   | GitCommitFileDiffTab
   | HttpClientTab
-  | PiTab;
+  | AgentTab;
 
 export type TabPatch = Partial<{
   title: string;
@@ -494,10 +494,10 @@ export function useTabs() {
     [],
   );
 
-  /** Pi has a single global session, so there is ever only one Pi tab. */
-  const newPiTab = useCallback(() => {
+  /** The agent panel has a single global session, so there is ever only one tab. */
+  const newAgentTab = useCallback(() => {
     const curr = tabsRef.current;
-    const existing = curr.find((t) => t.kind === "pi");
+    const existing = curr.find((t) => t.kind === "agent");
     if (existing) {
       setActiveId(existing.id);
       return existing.id;
@@ -505,7 +505,7 @@ export function useTabs() {
     const id = nextIdRef.current++;
     const nextTabs = [
       ...curr,
-      { id, kind: "pi", title: "Pi" } satisfies PiTab,
+      { id, kind: "agent", title: "Agent" } satisfies AgentTab,
     ];
     tabsRef.current = nextTabs;
     setTabs(nextTabs);
@@ -628,7 +628,7 @@ export function useTabs() {
     openGitDiffTab,
     openCommitHistoryTab,
     openCommitFileDiffTab,
-    newPiTab,
+    newAgentTab,
     closeTab,
     updateTab,
     selectByIndex,

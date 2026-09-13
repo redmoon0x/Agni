@@ -1,4 +1,4 @@
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, Write};
 #[cfg(windows)]
 use std::path::PathBuf;
 use std::process::{ChildStderr, ChildStdout, Command, Stdio};
@@ -11,6 +11,7 @@ use serde_json::Value;
 use shared_child::SharedChild;
 use tauri::ipc::Channel;
 
+use crate::modules::jsonl::read_lf_records;
 use crate::modules::workspace::{authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 
 const MAX_RPC_LINE_BYTES: usize = 2 * 1024 * 1024;
@@ -439,41 +440,6 @@ fn spawn_waiter(
         .expect("spawn Pi waiter");
 }
 
-fn read_lf_records<R, F>(reader: &mut R, limit: usize, mut on_record: F)
-where
-    R: Read,
-    F: FnMut(&[u8], bool) -> bool,
-{
-    let mut read_buffer = [0u8; 8192];
-    let mut record = Vec::with_capacity(8192);
-    let mut overflowed = false;
-    loop {
-        let count = match reader.read(&mut read_buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(count) => count,
-        };
-        for &byte in &read_buffer[..count] {
-            if byte == b'\n' {
-                if !on_record(&record, overflowed) {
-                    return;
-                }
-                record.clear();
-                overflowed = false;
-            } else if !overflowed {
-                if record.len() < limit {
-                    record.push(byte);
-                } else {
-                    record.clear();
-                    overflowed = true;
-                }
-            }
-        }
-    }
-    if !record.is_empty() || overflowed {
-        on_record(&record, overflowed);
-    }
-}
-
 #[cfg(unix)]
 fn configure_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;
@@ -509,33 +475,6 @@ mod tests {
         assert!(validate_command(&serde_json::json!({"type": "set-model"})).is_err());
         assert!(validate_command(&serde_json::json!({"message": "hello"})).is_err());
         assert!(validate_command(&serde_json::json!([])).is_err());
-    }
-
-    #[test]
-    fn lf_records_preserve_unicode_separators() {
-        let source = b"{\"message\":\"a\xE2\x80\xA8b\"}\n{\"type\":\"done\"}\r\n";
-        let mut records = Vec::new();
-        read_lf_records(&mut &source[..], 1024, |line, overflowed| {
-            records.push((line.to_vec(), overflowed));
-            true
-        });
-        assert_eq!(records.len(), 2);
-        assert!(records[0]
-            .0
-            .windows(3)
-            .any(|part| part == [0xE2, 0x80, 0xA8]));
-        assert!(!records[0].1);
-    }
-
-    #[test]
-    fn oversized_record_is_discarded_without_losing_next_record() {
-        let source = b"123456789\nok\n";
-        let mut records = Vec::new();
-        read_lf_records(&mut &source[..], 4, |line, overflowed| {
-            records.push((line.to_vec(), overflowed));
-            true
-        });
-        assert_eq!(records, vec![(Vec::new(), true), (b"ok".to_vec(), false)]);
     }
 
     #[cfg(windows)]

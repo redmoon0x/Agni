@@ -30,7 +30,7 @@ import {
   type SearchInlineHandle,
   type SearchTarget,
 } from "@/modules/header";
-import { PiPanel } from "@/modules/pi-agent";
+import { AgentPanel } from "@/modules/agent-panel";
 import { PetOverlayBridge } from "@/modules/pi-agent/PetOverlayBridge";
 import type { PreviewPaneHandle } from "@/modules/preview";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
@@ -102,7 +102,7 @@ export default function App() {
     openGitDiffTab,
     openCommitHistoryTab,
     openCommitFileDiffTab,
-    newPiTab,
+    newAgentTab,
     closeTab,
     updateTab,
     selectByIndex,
@@ -190,22 +190,23 @@ export default function App() {
   const activeTab = tabs.find((t) => t.id === activeId);
   const isEditorTab = activeTab?.kind === "editor";
   const isGitHistoryTab = activeTab?.kind === "git-history";
-  // Pi has a single global session -- only ever one live surface for it, so
-  // opening it as a full tab suppresses (and reclaims focus from) the side panel.
-  const piTab = tabs.find((t) => t.kind === "pi");
+  // The agent panel has a single global session -- only ever one live surface
+  // for it, so opening it as a full tab suppresses (and reclaims focus from) the
+  // side panel.
+  const agentTab = tabs.find((t) => t.kind === "agent");
 
-  const onNewPi = useCallback(() => {
+  const onNewAgent = useCallback(() => {
     closeRightPanel();
-    newPiTab();
-  }, [closeRightPanel, newPiTab]);
+    newAgentTab();
+  }, [closeRightPanel, newAgentTab]);
 
-  const onTogglePiPanel = useCallback(() => {
-    if (piTab) {
-      setActiveId(piTab.id);
+  const onToggleAgentPanel = useCallback(() => {
+    if (agentTab) {
+      setActiveId(agentTab.id);
       return;
     }
     toggleRightPanel();
-  }, [piTab, setActiveId, toggleRightPanel]);
+  }, [agentTab, setActiveId, toggleRightPanel]);
 
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
@@ -734,6 +735,7 @@ export default function App() {
             toggleSidebar,
             openSettings: () => void openSettingsWindow(),
             openShortcuts: () => setShortcutsOpen(true),
+            openAgentPanel: onNewAgent,
           })
         : [],
     [
@@ -754,6 +756,7 @@ export default function App() {
       toggleDock,
       splitDock,
       toggleSidebar,
+      onNewAgent,
     ],
   );
 
@@ -772,12 +775,12 @@ export default function App() {
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
               onNewHttpClient={() => openHttpClient()}
-              onNewPi={onNewPi}
+              onNewAgent={onNewAgent}
               onClose={handleClose}
               onPin={pinTab}
               onToggleSidebar={toggleSidebar}
-              onTogglePiPanel={onTogglePiPanel}
-              piPanelOpen={rightPanelOpen || activeTab?.kind === "pi"}
+              onToggleAgentPanel={onToggleAgentPanel}
+              agentPanelOpen={rightPanelOpen || activeTab?.kind === "agent"}
               onToggleDock={toggleDock}
               dockOpen={dockOpen}
               onSplitDock={splitDock}
@@ -868,8 +871,8 @@ export default function App() {
                           onPreviewUrlChange={handlePreviewUrl}
                           onOpenCommitFile={openCommitFileDiffTab}
                           onGitHistorySearchHandle={setGitHistoryHandle}
-                          piCwd={explorerRoot}
-                          piWorkspace={workspaceEnv}
+                          agentCwd={explorerRoot}
+                          agentWorkspace={workspaceEnv}
                         />
                       </ErrorBoundary>
                     </div>
@@ -930,9 +933,9 @@ export default function App() {
                 onResize={(size) => handleRightPanelResize(size.inPixels)}
               >
                 <div className="h-full min-h-0 border-l border-border/60 bg-card">
-                  {rightPanelOpen && !piTab ? (
-                    <ErrorBoundary label="Pi" inline>
-                      <PiPanel cwd={explorerRoot} workspace={workspaceEnv} />
+                  {rightPanelOpen && !agentTab ? (
+                    <ErrorBoundary label="Agent" inline>
+                      <AgentPanel cwd={explorerRoot} workspace={workspaceEnv} />
                     </ErrorBoundary>
                   ) : null}
                 </div>

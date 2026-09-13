@@ -32,12 +32,13 @@
 - Inline search, link detection, true color
 - WSL workspace environments on Windows
 
-### Pi, built in
+### Agent panel, built in
 - A native AI pair-programmer panel, not a bolted-on chat widget -- steer it mid-run or queue a follow-up for later
+- Switch between Pi, OpenCode, and Kilo Code (via the Agent Client Protocol) from the panel header, one process at a time
 - Model and thinking-level picker, session history, fork / clone / rename / export
 - `@file` mentions pull any workspace file into context as you type
 - Attach images straight into the conversation
-- Open Pi as a full tab for a distraction-free session, or keep it docked as a side panel
+- Open the agent panel as a full tab for a distraction-free session, or keep it docked as a side panel
 - Detects Claude Code, Codex, OpenCode, Agy, and Gemini too when run directly in a terminal pane -- tab indicator, auto-rename, and an OS notification when one needs attention
 
 ### Web preview

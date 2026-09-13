@@ -1,3 +1,4 @@
+import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
 import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LazyStore } from "@tauri-apps/plugin-store";
@@ -36,6 +37,8 @@ export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
   "xcode-light": "Xcode Light",
 };
 
+export type AgentId = "pi" | AcpAgentId;
+
 export type Preferences = {
   theme: ThemePref;
   themeId: string;
@@ -55,6 +58,7 @@ export type Preferences = {
   terminalScrollback: number;
   zoomLevel: number;
   agentNotifications: boolean;
+  agentPanelAgent: AgentId;
   petId: string | null;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
   editorAutoSave: boolean;
@@ -83,6 +87,7 @@ const KEY_TERMINAL_FONT_SIZE = "terminalFontSize";
 const KEY_TERMINAL_SCROLLBACK = "terminalScrollback";
 const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
+const KEY_AGENT_PANEL_AGENT = "agentPanelAgent";
 const KEY_PET_ID = "petId";
 const KEY_SHORTCUTS = "shortcuts";
 const KEY_EDITOR_AUTO_SAVE = "editorAutoSave";
@@ -124,6 +129,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   terminalScrollback: TERMINAL_SCROLLBACK_DEFAULT,
   zoomLevel: 1.0,
   agentNotifications: true,
+  agentPanelAgent: "pi",
   petId: null,
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
   editorAutoSave: false,
@@ -191,6 +197,9 @@ export async function loadPreferences(): Promise<Preferences> {
     agentNotifications:
       get<boolean>(KEY_AGENT_NOTIFICATIONS) ??
       DEFAULT_PREFERENCES.agentNotifications,
+    agentPanelAgent:
+      get<AgentId>(KEY_AGENT_PANEL_AGENT) ??
+      DEFAULT_PREFERENCES.agentPanelAgent,
     petId: get<string | null>(KEY_PET_ID) ?? DEFAULT_PREFERENCES.petId,
     shortcuts:
       get<Record<ShortcutId, KeyBinding[]>>(KEY_SHORTCUTS) ??
@@ -331,6 +340,10 @@ export async function setAgentNotifications(value: boolean): Promise<void> {
   await writePref(KEY_AGENT_NOTIFICATIONS, value);
 }
 
+export async function setAgentPanelAgent(value: AgentId): Promise<void> {
+  await writePref(KEY_AGENT_PANEL_AGENT, value);
+}
+
 export async function setPetId(value: string | null): Promise<void> {
   await writePref(KEY_PET_ID, value);
 }
@@ -369,6 +382,7 @@ export async function onPreferencesChange(
     [KEY_TERMINAL_SCROLLBACK]: "terminalScrollback",
     [KEY_ZOOM_LEVEL]: "zoomLevel",
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
+    [KEY_AGENT_PANEL_AGENT]: "agentPanelAgent",
     [KEY_PET_ID]: "petId",
     [KEY_SHORTCUTS]: "shortcuts",
     [KEY_EDITOR_AUTO_SAVE]: "editorAutoSave",

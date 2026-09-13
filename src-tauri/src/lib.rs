@@ -1,6 +1,6 @@
 pub mod modules;
 
-use modules::{agent, format, fs, git, http, pets, pi, pick_folder, pty, shell, workspace};
+use modules::{acp, agent, format, fs, git, http, pets, pi, pick_folder, pty, shell, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
@@ -199,6 +199,7 @@ pub fn run() {
         })
         .manage(pty::PtyState::default())
         .manage(pi::PiState::default())
+        .manage(acp::AcpState::default())
         .manage(format::FormatState::default())
         .manage(fs::watch::FsWatchState::default())
         .manage({
@@ -221,6 +222,10 @@ pub fn run() {
             pi::pi_stop,
             pi::pi_close_all,
             pi::pi_list_sessions,
+            acp::acp_start,
+            acp::acp_send,
+            acp::acp_stop,
+            acp::acp_close_all,
             pets::pets_list,
             pets::pets_sprite,
             pets::pets_import,

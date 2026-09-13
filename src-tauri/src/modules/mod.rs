@@ -1,8 +1,10 @@
+pub mod acp;
 pub mod agent;
 pub mod format;
 pub mod fs;
 pub mod git;
 pub mod http;
+pub mod jsonl;
 pub mod pets;
 pub mod pi;
 pub mod pick_folder;

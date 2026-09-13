@@ -22,7 +22,8 @@ import { fmtShortcut, MOD_KEY } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
 import { PathIcon } from "@/modules/explorer/lib/PathIcon";
-import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
+import { AgentIcon } from "@/modules/agent-panel/AgentIcon";
+import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { EditorTab, Tab } from "./lib/useTabs";
 
 type Props = {
@@ -33,7 +34,7 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onNewHttpClient: () => void;
-  onNewPi: () => void;
+  onNewAgent: () => void;
   onClose: (id: number) => void;
   /** Pin (promote) a preview tab to persistent on double-click. */
   onPin: (id: number) => void;
@@ -48,12 +49,13 @@ export function TabBar({
   onNewEditor,
   onNewGitGraph,
   onNewHttpClient,
-  onNewPi,
+  onNewAgent,
   onClose,
   onPin,
   compact,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const activeAgent = usePreferencesStore((state) => state.agentPanelAgent);
 
   // Horizontal wheel scroll without holding shift.
   useEffect(() => {
@@ -202,9 +204,9 @@ export function TabBar({
               <HugeiconsIcon icon={ApiIcon} size={14} strokeWidth={1.75} />
               <span className="flex-1">HTTP Client</span>
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onNewPi()}>
-              <PiLogoIcon size={14} />
-              <span className="flex-1">Pi</span>
+            <DropdownMenuItem onSelect={() => onNewAgent()}>
+              <AgentIcon agent={activeAgent} size={14} />
+              <span className="flex-1">Agent</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -214,6 +216,7 @@ export function TabBar({
 }
 
 function TabIcon({ tab }: { tab: Tab }) {
+  const activeAgent = usePreferencesStore((state) => state.agentPanelAgent);
   if (
     tab.kind === "editor" ||
     tab.kind === "markdown" ||
@@ -254,8 +257,8 @@ function TabIcon({ tab }: { tab: Tab }) {
       />
     );
   }
-  if (tab.kind === "pi") {
-    return <PiLogoIcon size={14} className="shrink-0" />;
+  if (tab.kind === "agent") {
+    return <AgentIcon agent={activeAgent} size={14} className="shrink-0" />;
   }
   return (
     <HugeiconsIcon

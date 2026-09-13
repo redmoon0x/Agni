@@ -40,6 +40,10 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+  formatContextUsage,
+  formatCost,
+} from "@/modules/agent-panel/lib/usage";
+import {
   type CommandPaletteFileHit,
   useWorkspaceFileSearch,
 } from "@/modules/command-palette/useWorkspaceFileSearch";
@@ -984,8 +988,7 @@ function PiSessionSwitcher({
 }
 
 function formatSessionCost(cost: number | undefined): string | null {
-  if (typeof cost !== "number") return null;
-  return `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}`;
+  return formatCost(cost);
 }
 
 export function PiPanel({ cwd, workspace }: Props) {
@@ -1031,6 +1034,13 @@ export function PiPanel({ cwd, workspace }: Props) {
     state.connection === "stopped";
   const empty = state.messages.length === 0 && state.tools.length === 0;
   const extensionStatus = Object.values(state.extensionStatuses).join(" · ");
+  const usageText =
+    [
+      formatContextUsage(state.stats?.contextUsage),
+      formatCost(state.stats?.cost),
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
@@ -1065,6 +1075,14 @@ export function PiPanel({ cwd, workspace }: Props) {
             title={extensionStatus}
           >
             {extensionStatus}
+          </span>
+        ) : null}
+        {usageText ? (
+          <span
+            className="shrink-0 text-[10px] text-muted-foreground"
+            title="Session usage"
+          >
+            {usageText}
           </span>
         ) : null}
         <DropdownMenu>

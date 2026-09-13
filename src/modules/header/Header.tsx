@@ -19,7 +19,7 @@ import {
 import { WindowControls } from "@/components/WindowControls";
 import { IS_MAC, KEY_SEP, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { NotificationBell } from "@/modules/agents";
-import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
+import { AgentIcon } from "@/modules/agent-panel/AgentIcon";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   getBindingTokens,
@@ -42,13 +42,13 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onNewHttpClient: () => void;
-  onNewPi: () => void;
+  onNewAgent: () => void;
   onClose: (id: number) => void;
   /** Promote a preview (transient) tab to persistent. */
   onPin: (id: number) => void;
   onToggleSidebar: () => void;
-  onTogglePiPanel: () => void;
-  piPanelOpen: boolean;
+  onToggleAgentPanel: () => void;
+  agentPanelOpen: boolean;
   onToggleDock: () => void;
   dockOpen: boolean;
   onSplitDock: (dir: "row" | "col") => void;
@@ -71,12 +71,12 @@ export function Header({
   onNewEditor,
   onNewGitGraph,
   onNewHttpClient,
-  onNewPi,
+  onNewAgent,
   onClose,
   onPin,
   onToggleSidebar,
-  onTogglePiPanel,
-  piPanelOpen,
+  onToggleAgentPanel,
+  agentPanelOpen,
   onToggleDock,
   dockOpen,
   onSplitDock,
@@ -87,6 +87,7 @@ export function Header({
   searchTarget,
   searchRef,
 }: Props) {
+  const activeAgent = usePreferencesStore((state) => state.agentPanelAgent);
   const rootRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   const userShortcuts = usePreferencesStore((s) => s.shortcuts);
@@ -145,19 +146,19 @@ export function Header({
     </Button>
   );
 
-  const piPanelButton = (
+  const agentPanelButton = (
     <Button
       variant="ghost"
       size="icon"
       className={`size-7 shrink-0 rounded-md hover:bg-accent hover:text-foreground ${
-        piPanelOpen ? "bg-accent text-foreground" : "text-muted-foreground"
+        agentPanelOpen ? "bg-accent text-foreground" : "text-muted-foreground"
       }`}
-      onClick={onTogglePiPanel}
-      title="Toggle Pi panel"
-      aria-label="Toggle Pi panel"
-      aria-pressed={piPanelOpen}
+      onClick={onToggleAgentPanel}
+      title="Toggle agent panel"
+      aria-label="Toggle agent panel"
+      aria-pressed={agentPanelOpen}
     >
-      <PiLogoIcon size={15} />
+      <AgentIcon agent={activeAgent} size={15} />
     </Button>
   );
 
@@ -249,7 +250,7 @@ export function Header({
           onNewEditor={onNewEditor}
           onNewGitGraph={onNewGitGraph}
           onNewHttpClient={onNewHttpClient}
-          onNewPi={onNewPi}
+          onNewAgent={onNewAgent}
           onClose={onClose}
           onPin={onPin}
           compact={compact}
@@ -263,7 +264,7 @@ export function Header({
         <>
           <NotificationBell onActivate={onActivateAgent} />
           {terminalButton}
-          {piPanelButton}
+          {agentPanelButton}
           {settingsButton}
         </>
       )}
@@ -271,7 +272,7 @@ export function Header({
       {!IS_MAC && (
         <>
           {terminalButton}
-          {piPanelButton}
+          {agentPanelButton}
           {settingsButton}
         </>
       )}

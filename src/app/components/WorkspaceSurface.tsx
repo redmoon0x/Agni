@@ -1,13 +1,13 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { cn } from "@/lib/utils";
+import { AgentPanel } from "@/modules/agent-panel";
 import { EditorStack, GitDiffStack } from "@/modules/editor";
 import { GitHistoryStack } from "@/modules/git-history";
 import { HtmlPreviewStack } from "@/modules/html-preview";
 import { HttpClientStack } from "@/modules/http-client";
 import { MarkdownStack } from "@/modules/markdown";
 import { MediaPreviewStack } from "@/modules/media-preview";
-import { PiPanel } from "@/modules/pi-agent";
 import { PreviewStack } from "@/modules/preview";
 import type { Tab } from "@/modules/tabs";
 import type { WorkspaceEnv } from "@/modules/workspace";
@@ -29,8 +29,8 @@ type Props = {
   onPreviewUrlChange: PreviewStackProps["onUrlChange"];
   onOpenCommitFile: GitHistoryStackProps["onOpenCommitFile"];
   onGitHistorySearchHandle: GitHistoryStackProps["onSearchHandle"];
-  piCwd: string | null;
-  piWorkspace: WorkspaceEnv;
+  agentCwd: string | null;
+  agentWorkspace: WorkspaceEnv;
 };
 
 /**
@@ -81,8 +81,8 @@ export function WorkspaceSurface({
   onPreviewUrlChange,
   onOpenCommitFile,
   onGitHistorySearchHandle,
-  piCwd,
-  piWorkspace,
+  agentCwd,
+  agentWorkspace,
 }: Props) {
   const kind = activeTab?.kind;
   const isEditorTab = kind === "editor";
@@ -93,8 +93,8 @@ export function WorkspaceSurface({
   const isGitDiffTab = kind === "git-diff" || kind === "git-commit-file";
   const isGitHistoryTab = kind === "git-history";
   const isHttpClientTab = kind === "http-client";
-  const isPiTab = kind === "pi";
-  const hasPiTab = tabs.some((t) => t.kind === "pi");
+  const isAgentTab = kind === "agent";
+  const hasAgentTab = tabs.some((t) => t.kind === "agent");
 
   return (
     <div className="relative h-full min-h-0">
@@ -158,9 +158,9 @@ export function WorkspaceSurface({
       >
         <HttpClientStack tabs={tabs} activeId={activeId} />
       </TabPane>
-      {hasPiTab ? (
-        <TabPane visible={isPiTab} padded={false} label="Pi" resetKey={activeId}>
-          <PiPanel cwd={piCwd} workspace={piWorkspace} />
+      {hasAgentTab ? (
+        <TabPane visible={isAgentTab} padded={false} label="Agent" resetKey={activeId}>
+          <AgentPanel cwd={agentCwd} workspace={agentWorkspace} />
         </TabPane>
       ) : null}
     </div>
