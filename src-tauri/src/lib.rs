@@ -119,11 +119,13 @@ async fn pet_overlay_show(app: tauri::AppHandle) -> Result<(), String> {
         .max_inner_size(116.0, 128.0)
         .resizable(false)
         .decorations(false)
-        .transparent(true)
         .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false);
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let builder = builder.transparent(true);
 
     let window = builder.build().map_err(|error| error.to_string())?;
     window.center().map_err(|error| error.to_string())?;
