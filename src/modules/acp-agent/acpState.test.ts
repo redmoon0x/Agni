@@ -70,6 +70,26 @@ describe("reduceAcpUpdate messages", () => {
     ]);
   });
 
+  it("splits thought and reply chunks that share a messageId", () => {
+    let state = update(
+      chunk("agent_thought_chunk", {
+        messageId: "m1",
+        content: { type: "text", text: "thinking" },
+      }),
+    );
+    state = reduceAcpUpdate(
+      state,
+      chunk("agent_message_chunk", {
+        messageId: "m1",
+        content: { type: "text", text: "reply" },
+      }),
+    );
+    expect(state.messages.map((m) => [m.role, m.text])).toEqual([
+      ["thought", "thinking"],
+      ["agent", "reply"],
+    ]);
+  });
+
   it("appends id-less chunks of the same role to the previous anonymous message", () => {
     let state = update(
       chunk("agent_message_chunk", { content: { type: "text", text: "a" } }),

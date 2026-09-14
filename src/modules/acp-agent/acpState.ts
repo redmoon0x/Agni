@@ -145,7 +145,7 @@ function appendChunk(
   const messageId = asString(update.messageId);
   const messages = state.messages;
   const last = messages[messages.length - 1];
-  const id = messageId ? `msg:${messageId}` : null;
+  const id = messageId ? `msg:${role}:${messageId}` : null;
 
   let targetId = id;
   let index = -1;
