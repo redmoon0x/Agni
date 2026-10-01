@@ -5,6 +5,7 @@ import "@fontsource/jetbrains-mono/cyrillic-700.css";
 import "@xterm/xterm/css/xterm.css";
 import "./styles/globals.css";
 
+import { ensureMonoFontsLoaded } from "@/lib/fonts";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ReactDOM from "react-dom/client";
@@ -28,12 +29,8 @@ window.addEventListener("unhandledrejection", (e) => {
   reportError("unhandled rejection", e.reason, { silent: true });
 });
 
-// Render-instrumentation overlay, opt-in: `VITE_REACT_SCAN=true pnpm dev`.
-// Dev-only dynamic import so it never reaches the production bundle.
-if (import.meta.env.DEV && import.meta.env.VITE_REACT_SCAN === "true") {
-  const { scan } = await import("react-scan");
-  scan({ enabled: true });
-}
+// Preload mono fonts before first paint so terminal never shows blank.
+ensureMonoFontsLoaded();
 
 // Reap PTY sessions orphaned by a prior webview load before any tab spawns.
 await invoke("pty_close_all").catch(() => {});

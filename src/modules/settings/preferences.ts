@@ -3,6 +3,7 @@ import {
   DEFAULT_PREFERENCES,
   loadPreferences,
   onPreferencesChange,
+  parseAgentId,
   type Preferences,
 } from "./store";
 
@@ -55,7 +56,11 @@ export const usePreferencesStore = create<State>((set) => ({
     set({ ...prefs, hydrated: true });
     mirrorBgFastPath(prefs.backgroundKind, prefs.backgroundImageId);
     void onPreferencesChange((key, value) => {
-      set({ [key]: value } as Partial<State>);
+      const preference =
+        key === "agentPanelAgent"
+          ? (parseAgentId(value) ?? DEFAULT_PREFERENCES.agentPanelAgent)
+          : value;
+      set({ [key]: preference } as Partial<State>);
       if (key === "backgroundKind" || key === "backgroundImageId") {
         const s = usePreferencesStore.getState();
         mirrorBgFastPath(s.backgroundKind, s.backgroundImageId);

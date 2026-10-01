@@ -1,4 +1,7 @@
-import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
+import {
+  ACP_AGENTS,
+  type AcpAgentId,
+} from "@/modules/acp-agent/lib/agent";
 import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LazyStore } from "@tauri-apps/plugin-store";
@@ -38,6 +41,17 @@ export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
 };
 
 export type AgentId = "pi" | AcpAgentId;
+
+export function parseAgentId(value: unknown): AgentId | null {
+  if (value === "pi") return value;
+  if (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(ACP_AGENTS, value)
+  ) {
+    return value as AcpAgentId;
+  }
+  return null;
+}
 
 export type Preferences = {
   theme: ThemePref;
@@ -198,7 +212,7 @@ export async function loadPreferences(): Promise<Preferences> {
       get<boolean>(KEY_AGENT_NOTIFICATIONS) ??
       DEFAULT_PREFERENCES.agentNotifications,
     agentPanelAgent:
-      get<AgentId>(KEY_AGENT_PANEL_AGENT) ??
+      parseAgentId(get<unknown>(KEY_AGENT_PANEL_AGENT)) ??
       DEFAULT_PREFERENCES.agentPanelAgent,
     petId: get<string | null>(KEY_PET_ID) ?? DEFAULT_PREFERENCES.petId,
     shortcuts:

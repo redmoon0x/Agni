@@ -66,6 +66,30 @@ export type AcpPermissionRequest = {
   options: AcpPermissionOption[];
 };
 
+export type AcpElicitationChoice = {
+  id: string;
+  value: string | number | boolean;
+  name: string;
+  description?: string;
+};
+
+export type AcpElicitationField = {
+  name: string;
+  type: "string" | "number" | "integer" | "boolean" | "select";
+  title: string;
+  description?: string;
+  required: boolean;
+  choices: AcpElicitationChoice[];
+  defaultValue?: string | number | boolean;
+};
+
+export type AcpElicitationRequest = {
+  id: number | string;
+  message: string;
+  title: string | null;
+  fields: AcpElicitationField[];
+};
+
 export type AcpUsage = {
   used: number;
   size: number;
@@ -146,6 +170,7 @@ export type AcpState = {
   tools: AcpToolCall[];
   plan: AcpPlanEntry[];
   permission: AcpPermissionRequest | null;
+  elicitation: AcpElicitationRequest | null;
   usage: AcpUsage | null;
   commands: AcpCommand[];
   configOptions: AcpConfigOption[];
@@ -170,6 +195,7 @@ export const INITIAL_ACP_STATE: AcpState = {
   tools: [],
   plan: [],
   permission: null,
+  elicitation: null,
   usage: null,
   commands: [],
   configOptions: [],

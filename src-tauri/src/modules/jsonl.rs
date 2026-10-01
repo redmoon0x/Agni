@@ -1,5 +1,8 @@
 use std::io::Read;
 
+pub const MAX_PROTOCOL_RECORD_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_OUTBOUND_PROTOCOL_RECORD_BYTES: usize = 12 * 1024 * 1024;
+
 /// Reads newline-delimited records from a stream, invoking `on_record` with the
 /// record bytes (excluding the trailing LF) and an `overflowed` flag. A record
 /// longer than `limit` is discarded whole so the next record still parses.

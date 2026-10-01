@@ -503,6 +503,11 @@ export function useTerminalSession({
 
   const focus = useCallback(() => focusSlot(leafId), [leafId]);
 
+  const ptyOpening = useMemo(
+    () => sessions.get(leafId)?.ptyOpening ?? false,
+    [leafId],
+  );
+
   const getBuffer = useCallback(
     (maxLines = 200): string | null => {
       const s = sessions.get(leafId);
@@ -540,8 +545,8 @@ export function useTerminalSession({
   }, []);
 
   return useMemo(
-    () => ({ write, focus, getBuffer, getSelection, applyTheme }),
-    [write, focus, getBuffer, getSelection, applyTheme],
+    () => ({ write, focus, getBuffer, getSelection, applyTheme, ptyOpening }),
+    [write, focus, getBuffer, getSelection, applyTheme, ptyOpening],
   );
 }
 

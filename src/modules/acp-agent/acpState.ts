@@ -106,6 +106,7 @@ export function resetAcpConversation(state: AcpState): AcpState {
     tools: [],
     plan: [],
     permission: null,
+    elicitation: null,
     usage: null,
     isStreaming: false,
     lastStopReason: null,

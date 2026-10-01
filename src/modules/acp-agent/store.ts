@@ -20,9 +20,11 @@ import {
   type AcpSessionInfo,
   type AcpState,
 } from "@/modules/acp-agent/types";
+import { parseElicitationRequest } from "@/modules/acp-agent/elicitation";
 import { currentWorkspaceEnv, type WorkspaceEnv } from "@/modules/workspace";
 
 const ACP_PROTOCOL_VERSION = 1;
+const MAX_OUTBOUND_ACP_BYTES = 12 * 1024 * 1024;
 
 type ReadResult =
   | { kind: "text"; content: string; size: number }
@@ -126,8 +128,18 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
+function assertOutboundMessageSize(message: Record<string, unknown>): void {
+  const bytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
+  if (bytes > MAX_OUTBOUND_ACP_BYTES) {
+    throw new Error(
+      "This request is larger than 12 MiB. Remove some file context or image attachments and try again.",
+    );
+  }
+}
+
 async function send(message: Record<string, unknown>): Promise<void> {
   if (processId === null) throw new Error("The agent is not running");
+  assertOutboundMessageSize(message);
   await invoke("acp_send", { sessionId: processId, message });
 }
 
@@ -227,6 +239,20 @@ async function handleClientRequest(
     return;
   }
 
+  if (method === "elicitation/create") {
+    const elicitation = parseElicitationRequest(id, params);
+    if (!elicitation) {
+      sendError(id, -32602, "Unsupported elicitation request");
+      return;
+    }
+    if (useAcpStore.getState().elicitation) {
+      sendError(id, -32000, "Another elicitation is already awaiting input");
+      return;
+    }
+    useAcpStore.setState({ elicitation });
+    return;
+  }
+
   if (method === "fs/read_text_file") {
     const path = typeof params.path === "string" ? params.path : "";
     let result: ReadResult | null = null;
@@ -295,7 +321,15 @@ function handleProcessEvent(event: AcpProcessEvent, eventGeneration: number): vo
     return;
   }
   if (event.kind === "protocol_error") {
-    useAcpStore.setState({ rpcError: event.message });
+    promptRequestId = null;
+    for (const entry of pending.values()) entry.reject(new Error(event.message));
+    pending.clear();
+    useAcpStore.setState({
+      rpcError: event.message,
+      isStreaming: false,
+      permission: null,
+      elicitation: null,
+    });
     return;
   }
   processId = null;
@@ -309,6 +343,7 @@ function handleProcessEvent(event: AcpProcessEvent, eventGeneration: number): vo
     connection: "exited",
     isStreaming: false,
     permission: null,
+    elicitation: null,
     processError:
       diagnostic ??
       (event.code === 0 || event.code === null
@@ -358,6 +393,7 @@ export function ensureAcpStarted(
         protocolVersion: ACP_PROTOCOL_VERSION,
         clientCapabilities: {
           fs: { readTextFile: true, writeTextFile: true },
+          elicitation: { form: {} },
           session: { configOptions: { boolean: {} } },
         },
         clientInfo: { name: "agni", title: "Agni", version: clientVersion },
@@ -427,6 +463,7 @@ export async function suspendAcp(): Promise<void> {
     connection: "stopped",
     isStreaming: false,
     permission: null,
+    elicitation: null,
     processError: null,
     diagnostic: null,
   });
@@ -493,6 +530,7 @@ export async function loadAcpSession(sessionId: string): Promise<void> {
     modeState: null,
     currentMode: null,
     permission: null,
+    elicitation: null,
   });
 }
 
@@ -550,14 +588,18 @@ export async function promptAcp(input: AcpPromptInput): Promise<void> {
     blocks.push({ type: "image", mimeType: image.mimeType, data: image.data });
   }
   if (blocks.length === 0) return;
+  const params = { sessionId, prompt: blocks };
+  assertOutboundMessageSize({
+    jsonrpc: "2.0",
+    id: requestSequence + 1,
+    method: "session/prompt",
+    params,
+  });
   const display =
     text ||
     (input.images?.length ? "Sent an image" : "Sent file context");
   useAcpStore.setState((state) => appendUserPrompt(state, display));
-  const { id, promise } = sendRequest("session/prompt", {
-    sessionId,
-    prompt: blocks,
-  });
+  const { id, promise } = sendRequest("session/prompt", params);
   promptRequestId = id;
   useAcpStore.setState({ isStreaming: true, lastStopReason: null, rpcError: null });
   promise.catch((error) => {
@@ -569,6 +611,7 @@ export function cancelAcp(): void {
   const sessionId = useAcpStore.getState().sessionId;
   if (sessionId) sendNotification("session/cancel", { sessionId });
   if (useAcpStore.getState().permission) respondToPermission("cancelled");
+  if (useAcpStore.getState().elicitation) respondToElicitation("cancel");
 }
 
 export function respondToPermission(optionId: string | "cancelled"): void {
@@ -580,4 +623,17 @@ export function respondToPermission(optionId: string | "cancelled"): void {
       : { outcome: "selected", optionId };
   sendResult(permission.id, { outcome });
   useAcpStore.setState({ permission: null });
+}
+
+export function respondToElicitation(
+  action: "accept" | "cancel" | "decline",
+  content?: Record<string, string | number | boolean>,
+): void {
+  const elicitation = useAcpStore.getState().elicitation;
+  if (!elicitation) return;
+  sendResult(elicitation.id, {
+    action,
+    ...(action === "accept" ? { content: content ?? {} } : {}),
+  });
+  useAcpStore.setState({ elicitation: null });
 }

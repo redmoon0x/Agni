@@ -14,6 +14,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+  type ClipboardEvent,
   type KeyboardEvent,
   useEffect,
   useMemo,
@@ -44,6 +45,9 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+  clipboardImageFiles,
+} from "@/modules/agent-panel/lib/clipboardImages";
+import {
   formatCost,
   formatTokens,
 } from "@/modules/agent-panel/lib/usage";
@@ -65,6 +69,7 @@ import {
   loadAcpSession,
   newAcpSession,
   promptAcp,
+  respondToElicitation,
   respondToPermission,
   restartAcp,
   setAcpConfigOption,
@@ -72,8 +77,13 @@ import {
   stopAcp,
   useAcpStore,
 } from "@/modules/acp-agent/store";
+import {
+  defaultElicitationValues,
+  elicitationContent,
+} from "@/modules/acp-agent/elicitation";
 import type {
   AcpConfigOption,
+  AcpElicitationRequest,
   AcpImageAttachment,
   AcpMessage,
   AcpModeState,
@@ -245,7 +255,7 @@ function Message({ message }: { message: AcpMessage }) {
         <div className="mb-1 text-[9px] tracking-wide text-muted-foreground uppercase">
           Thinking
         </div>
-        <div className="text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+        <div className="select-text text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
           {message.text}
         </div>
       </div>
@@ -254,14 +264,14 @@ function Message({ message }: { message: AcpMessage }) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap">
+        <div className="select-text max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap">
           {message.text}
         </div>
       </div>
     );
   }
   return (
-    <div className="text-[12px] leading-relaxed">
+    <div className="select-text text-[12px] leading-relaxed">
       <Streamdown components={markdownComponents}>{message.text}</Streamdown>
     </div>
   );
@@ -353,6 +363,131 @@ function PermissionPrompt() {
       </div>
     </div>
   );
+}
+
+function ElicitationForm({ elicitation }: { elicitation: AcpElicitationRequest }) {
+  const [values, setValues] = useState(() =>
+    defaultElicitationValues(elicitation.fields),
+  );
+  const [invalid, setInvalid] = useState(false);
+  const submit = () => {
+    const content = elicitationContent(elicitation.fields, values);
+    if (!content) {
+      setInvalid(true);
+      return;
+    }
+    respondToElicitation("accept", content);
+  };
+
+  return (
+    <div className="mx-2 mb-2 rounded-lg border border-primary/30 bg-primary/[0.04] p-2.5">
+      <div className="text-[11px] font-medium">
+        {elicitation.title ?? "The agent needs information"}
+      </div>
+      <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+        {elicitation.message}
+      </p>
+      <div className="mt-3 space-y-2.5">
+        {elicitation.fields.map((field) => {
+          const id = `elicitation-${String(elicitation.id)}-${field.name}`;
+          const value = values[field.name];
+          return (
+            <div key={field.name} className="space-y-1">
+              {field.type === "boolean" ? (
+                <label htmlFor={id} className="flex cursor-pointer items-center gap-2 text-[11px]">
+                  <input
+                    id={id}
+                    type="checkbox"
+                    checked={value === true}
+                    onChange={(event) =>
+                      setValues((current) => ({
+                        ...current,
+                        [field.name]: event.target.checked,
+                      }))
+                    }
+                  />
+                  {field.title}
+                </label>
+              ) : (
+                <>
+                  <label htmlFor={id} className="block text-[11px] font-medium">
+                    {field.title}
+                    {field.required ? " *" : ""}
+                  </label>
+                  {field.type === "select" ? (
+                    <select
+                      id={id}
+                      value={typeof value === "string" ? value : ""}
+                      onChange={(event) =>
+                        setValues((current) => ({
+                          ...current,
+                          [field.name]: event.target.value,
+                        }))
+                      }
+                      className="h-8 w-full rounded-md border border-border/70 bg-background px-2 text-[11px] outline-none focus:border-primary/70"
+                    >
+                      <option value="">Select an option</option>
+                      {field.choices.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id={id}
+                      type={field.type === "string" ? "text" : "number"}
+                      step={field.type === "integer" ? "1" : "any"}
+                      value={typeof value === "string" ? value : ""}
+                      onChange={(event) =>
+                        setValues((current) => ({
+                          ...current,
+                          [field.name]: event.target.value,
+                        }))
+                      }
+                      className="h-8 w-full rounded-md border border-border/70 bg-background px-2 text-[11px] outline-none focus:border-primary/70"
+                    />
+                  )}
+                </>
+              )}
+              {field.description ? (
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  {field.description}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      {invalid ? (
+        <p className="mt-2 text-[10px] text-destructive">
+          Complete the required fields with valid values.
+        </p>
+      ) : null}
+      <div className="mt-3 flex gap-1.5">
+        <button
+          type="button"
+          onClick={submit}
+          className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:bg-primary/20"
+        >
+          Continue
+        </button>
+        <button
+          type="button"
+          onClick={() => respondToElicitation("cancel")}
+          className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05]"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ElicitationPrompt() {
+  const elicitation = useAcpStore((state) => state.elicitation);
+  if (!elicitation) return null;
+  return <ElicitationForm key={String(elicitation.id)} elicitation={elicitation} />;
 }
 
 function ConfigSelect({ option }: { option: AcpConfigOption }) {
@@ -761,7 +896,7 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
     }
   };
 
-  const addImages = async (files: FileList | null) => {
+  const addImages = async (files: FileList | readonly File[] | null) => {
     if (!files?.length) return;
     const nextFiles = Array.from(files).filter((file) =>
       file.type.startsWith("image/"),
@@ -795,6 +930,13 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
     } finally {
       if (imageInputRef.current) imageInputRef.current.value = "";
     }
+  };
+
+  const handleImagePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = clipboardImageFiles(event.clipboardData);
+    if (images.length === 0) return;
+    event.preventDefault();
+    void addImages(images);
   };
 
   const safeAtHighlight =
@@ -965,6 +1107,7 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
             );
           }}
           onKeyDown={handleKeyDown}
+          onPaste={canAttach ? handleImagePaste : undefined}
           placeholder={placeholder}
           rows={3}
           disabled={connection !== "ready"}
@@ -983,6 +1126,7 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
               />
               <button
                 type="button"
+                title="Choose or paste an image"
                 disabled={attachments.length >= MAX_IMAGE_ATTACHMENTS}
                 onClick={() => imageInputRef.current?.click()}
                 className="rounded-md px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-50"
@@ -1033,13 +1177,18 @@ export function AcpPanel({ agent, cwd, workspace }: Props) {
   const state = useAcpStore();
   const descriptor = acpAgent(agent);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
+  const startRef = useRef(0);
   const { scrollRef, contentRef } = useStickToBottom({
     initial: "instant",
     resize: "instant",
   });
 
   useEffect(() => {
-    void ensureAcpStarted(agent, cwd, workspace).catch(() => {});
+    const gen = ++startRef.current;
+    void stopAcp().then(() => {
+      if (gen !== startRef.current) return;
+      void ensureAcpStarted(agent, cwd, workspace).catch(() => {});
+    });
   }, [agent, cwd, workspace]);
 
   const items = useMemo(() => {
@@ -1194,6 +1343,7 @@ export function AcpPanel({ agent, cwd, workspace }: Props) {
           {state.rpcError}
         </div>
       ) : null}
+      <ElicitationPrompt />
       <PermissionPrompt />
       <PlanList />
       <AcpComposer agent={agent} root={cwd} />

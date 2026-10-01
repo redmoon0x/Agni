@@ -11,11 +11,11 @@ use serde_json::Value;
 use shared_child::SharedChild;
 use tauri::ipc::Channel;
 
-use crate::modules::jsonl::read_lf_records;
+use crate::modules::jsonl::{
+    read_lf_records, MAX_OUTBOUND_PROTOCOL_RECORD_BYTES, MAX_PROTOCOL_RECORD_BYTES,
+};
 use crate::modules::workspace::{authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 
-const MAX_RPC_LINE_BYTES: usize = 2 * 1024 * 1024;
-const MAX_COMMAND_BYTES: usize = 12 * 1024 * 1024;
 const MAX_STDERR_LINE_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Serialize)]
@@ -131,7 +131,7 @@ pub async fn pi_start(
     *slot = Some(Arc::clone(&session));
     drop(slot);
 
-    spawn_stdout_reader(stdout, on_event.clone());
+    spawn_stdout_reader(stdout, Arc::clone(&session), on_event.clone());
     spawn_stderr_reader(stderr, on_event.clone());
     spawn_waiter(id, child, Arc::clone(&state.session), on_event);
 
@@ -147,8 +147,8 @@ pub fn pi_send(
 ) -> Result<(), String> {
     validate_command(&message)?;
     let encoded = serde_json::to_vec(&message).map_err(|e| e.to_string())?;
-    if encoded.len() > MAX_COMMAND_BYTES {
-        return Err("Pi command is too large".into());
+    if encoded.len() > MAX_OUTBOUND_PROTOCOL_RECORD_BYTES {
+        return Err("Pi command is too large (12 MiB maximum)".into());
     }
 
     let session = state
@@ -370,17 +370,21 @@ fn cleanup_failed_start(child: &SharedChild, message: &str) -> String {
     message.to_string()
 }
 
-fn spawn_stdout_reader(mut stdout: ChildStdout, channel: Channel<PiEvent>) {
+fn spawn_stdout_reader(
+    mut stdout: ChildStdout,
+    session: Arc<PiSession>,
+    channel: Channel<PiEvent>,
+) {
     thread::Builder::new()
         .name("agni-pi-stdout".into())
         .spawn(move || {
-            read_lf_records(&mut stdout, MAX_RPC_LINE_BYTES, |line, overflowed| {
+            read_lf_records(&mut stdout, MAX_PROTOCOL_RECORD_BYTES, |line, overflowed| {
                 if overflowed {
-                    return channel
-                        .send(PiEvent::ProtocolError {
-                            message: "Pi sent an RPC record larger than 2 MiB".into(),
-                        })
-                        .is_ok();
+                    let _ = channel.send(PiEvent::ProtocolError {
+                        message: "Pi sent an RPC record larger than 16 MiB. The session was stopped to keep the protocol synchronized.".into(),
+                    });
+                    kill_process_tree(&session);
+                    return false;
                 }
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
                 if line.is_empty() {

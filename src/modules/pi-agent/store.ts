@@ -12,6 +12,8 @@ import {
 } from "@/modules/pi-agent/types";
 import type { WorkspaceEnv } from "@/modules/workspace";
 
+const MAX_OUTBOUND_PI_BYTES = 12 * 1024 * 1024;
+
 type PiStore = PiRpcState & {
   connection: PiConnectionStatus;
   processError: string | null;
@@ -39,6 +41,15 @@ let lastStart: { cwd: string | null; workspace: WorkspaceEnv } | null = null;
 function requestId(): string {
   requestSequence += 1;
   return `agni-${requestSequence}`;
+}
+
+function assertOutboundMessageSize(message: Record<string, unknown>): void {
+  const bytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
+  if (bytes > MAX_OUTBOUND_PI_BYTES) {
+    throw new Error(
+      "This request is larger than 12 MiB. Remove some image attachments and try again.",
+    );
+  }
 }
 
 function handleProcessEvent(event: PiProcessEvent, eventGeneration: number) {
@@ -74,7 +85,10 @@ function handleProcessEvent(event: PiProcessEvent, eventGeneration: number) {
     return;
   }
   if (event.kind === "protocol_error") {
-    usePiStore.setState({ rpcError: event.message });
+    usePiStore.setState((state) => ({
+      rpcError: event.message,
+      session: { ...state.session, isStreaming: false },
+    }));
     return;
   }
   sessionId = null;
@@ -94,6 +108,7 @@ function handleProcessEvent(event: PiProcessEvent, eventGeneration: number) {
 
 async function send(message: Record<string, unknown>): Promise<void> {
   if (sessionId === null) throw new Error("Pi is not running");
+  assertOutboundMessageSize(message);
   await invoke("pi_send", { sessionId, message });
 }
 

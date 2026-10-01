@@ -1,6 +1,6 @@
 import { useTheme } from "@/modules/theme";
 import type { SearchAddon } from "@xterm/addon-search";
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTerminalSession } from "./lib/useTerminalSession";
 
 export type TerminalPaneHandle = {
@@ -50,6 +50,17 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, Props>(
       onCwd: (c) => onCwd?.(leafId, c),
     });
 
+    const { ptyOpening } = session;
+    const [loading, setLoading] = useState(ptyOpening);
+
+    useEffect(() => {
+      if (ptyOpening) {
+        setLoading(true);
+        const timer = setTimeout(() => setLoading(false), 3000);
+        return () => clearTimeout(timer);
+      }
+    }, [ptyOpening]);
+
     useEffect(() => {
       // Defer one frame so CSS-variable token resolution sees the new class.
       const id = requestAnimationFrame(() => session.applyTheme());
@@ -75,7 +86,14 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, Props>(
           visibility: visible ? "visible" : "hidden",
           pointerEvents: visible ? "auto" : "none",
         }}
-      />
+      >
+        {loading && (
+          <div className="flex items-center justify-center h-full text-[11px] text-muted-foreground gap-2">
+            <span className="inline-block animate-pulse">●</span>
+            Starting terminal...
+          </div>
+        )}
+      </div>
     );
   },
 );

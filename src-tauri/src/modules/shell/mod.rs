@@ -62,6 +62,7 @@ pub async fn shell_run_command(
     rx.recv().map_err(|e| e.to_string())?
 }
 
+#[cfg_attr(not(all(test, unix)), allow(dead_code))]
 pub(crate) fn run_blocking_inner(
     command: String,
     cwd: Option<String>,

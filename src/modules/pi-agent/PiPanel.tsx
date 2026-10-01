@@ -12,7 +12,13 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type ClipboardEvent,
+  type KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 import { useStickToBottom } from "use-stick-to-bottom";
@@ -39,6 +45,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import {
+  clipboardImageFiles,
+} from "@/modules/agent-panel/lib/clipboardImages";
 import {
   formatContextUsage,
   formatCost,
@@ -154,7 +163,7 @@ function Message({ message }: { message: PiMessage }) {
   if (!text && !thinking) return null;
   if (message.role === "user") {
     return (
-      <div className="ml-7 rounded-xl bg-foreground/[0.065] px-3 py-2.5 text-[12px] leading-relaxed whitespace-pre-wrap">
+      <div className="select-text ml-7 rounded-xl bg-foreground/[0.065] px-3 py-2.5 text-[12px] leading-relaxed whitespace-pre-wrap">
         {text}
       </div>
     );
@@ -418,7 +427,7 @@ function PiComposer({ root }: { root: string | null }) {
     }
   };
 
-  const addImages = async (files: FileList | null) => {
+  const addImages = async (files: FileList | readonly File[] | null) => {
     if (!files?.length) return;
     const nextFiles = Array.from(files).filter((file) =>
       file.type.startsWith("image/"),
@@ -454,6 +463,13 @@ function PiComposer({ root }: { root: string | null }) {
     } finally {
       if (imageInputRef.current) imageInputRef.current.value = "";
     }
+  };
+
+  const handleImagePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = clipboardImageFiles(event.clipboardData);
+    if (images.length === 0) return;
+    event.preventDefault();
+    void addImages(images);
   };
 
   // `fileHits` can shrink after an async search resolves without another
@@ -618,6 +634,7 @@ function PiComposer({ root }: { root: string | null }) {
             );
           }}
           onKeyDown={handleKeyDown}
+          onPaste={handleImagePaste}
           placeholder={
             session.isStreaming && deliveryMode === "followUp"
               ? "Queue a follow-up for Pi... (@ to reference a file)"
@@ -640,6 +657,7 @@ function PiComposer({ root }: { root: string | null }) {
           />
           <button
             type="button"
+            title="Choose or paste an image"
             disabled={attachments.length >= MAX_IMAGE_ATTACHMENTS}
             onClick={() => imageInputRef.current?.click()}
             className="rounded-md px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-50"
@@ -995,6 +1013,7 @@ export function PiPanel({ cwd, workspace }: Props) {
   const state = usePiStore();
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const startRef = useRef(0);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [autoRetryEnabled, setAutoRetryEnabled] = useState(true);
   const shownNotification = useRef<string | null>(null);
@@ -1005,7 +1024,11 @@ export function PiPanel({ cwd, workspace }: Props) {
   });
 
   useEffect(() => {
-    void ensurePiStarted(cwd, workspace).catch(() => {});
+    const gen = ++startRef.current;
+    void stopPi().then(() => {
+      if (gen !== startRef.current) return;
+      void ensurePiStarted(cwd, workspace).catch(() => {});
+    });
   }, [cwd, workspace]);
 
   useEffect(() => {
