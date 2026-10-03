@@ -288,6 +288,7 @@ pub fn run() {
             workspace::workspace_current_dir,
             agent::agent_enable_claude_hooks,
             agent::agent_claude_hooks_status,
+            agent::agents_installed,
             pick_folder::pick_folder,
             get_launch_dir,
             open_settings_window,

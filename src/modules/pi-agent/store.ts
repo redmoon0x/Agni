@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
+import { invalidateAgentAvailability } from "@/modules/agent-panel/lib/installedAgents";
 import { reducePiRpc, resetPiConversation } from "@/modules/pi-agent/rpcState";
 import {
   INITIAL_PI_RPC_STATE,
@@ -165,9 +166,11 @@ export function ensurePiStarted(
       if (eventGeneration !== generation) return;
       sessionId = null;
       activeClient.channel = null;
+      const message = String(error);
+      if (message.includes("is on PATH")) invalidateAgentAvailability();
       usePiStore.setState({
         connection: "error",
-        processError: String(error),
+        processError: message,
       });
       throw error;
     })

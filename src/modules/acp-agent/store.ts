@@ -12,6 +12,7 @@ import {
   resetAcpConversation,
 } from "@/modules/acp-agent/acpState";
 import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
+import { invalidateAgentAvailability } from "@/modules/agent-panel/lib/installedAgents";
 import {
   INITIAL_ACP_STATE,
   type AcpConnectionStatus,
@@ -435,11 +436,13 @@ export function ensureAcpStarted(
       if (eventGeneration !== generation) return;
       processId = null;
       activeClient.channel = null;
+      const message = errorText(error);
+      if (message.includes("is on PATH")) invalidateAgentAvailability();
       useAcpStore.setState({
         connection: "error",
-        processError: errorText(error),
+        processError: message,
       });
-      throw error instanceof Error ? error : new Error(errorText(error));
+      throw error instanceof Error ? error : new Error(message);
     })
     .finally(() => {
       startPromise = null;
