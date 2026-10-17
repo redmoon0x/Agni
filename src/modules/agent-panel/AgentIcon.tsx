@@ -1,5 +1,7 @@
 import { Robot01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { ClaudeLogoIcon } from "@/modules/acp-agent/ClaudeLogoIcon";
+import { CommandCodeLogoIcon } from "@/modules/acp-agent/CommandCodeLogoIcon";
 import { KiloLogoIcon } from "@/modules/acp-agent/KiloLogoIcon";
 import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
 import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
@@ -19,6 +21,12 @@ export function AgentIcon({
   }
   if (agent === "kilo") {
     return <KiloLogoIcon size={size} className={className} />;
+  }
+  if (agent === "commandcode") {
+    return <CommandCodeLogoIcon size={size} className={className} />;
+  }
+  if (agent === "claude") {
+    return <ClaudeLogoIcon size={size} className={className} />;
   }
   if (agent === "pi") {
     return <PiLogoIcon size={size} className={className} />;

@@ -15,6 +15,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useRef,
   useState,
@@ -103,6 +104,7 @@ import type { WorkspaceEnv } from "@/modules/workspace";
 type Props = {
   cwd: string | null;
   workspace: WorkspaceEnv;
+  agentPicker?: ReactNode;
 };
 
 function runPiAction(action: Promise<unknown>) {
@@ -1009,7 +1011,7 @@ function formatSessionCost(cost: number | undefined): string | null {
   return formatCost(cost);
 }
 
-export function PiPanel({ cwd, workspace }: Props) {
+export function PiPanel({ cwd, workspace, agentPicker }: Props) {
   const state = usePiStore();
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
@@ -1068,8 +1070,12 @@ export function PiPanel({ cwd, workspace }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <PiLogoIcon size={15} />
-        <span className="text-[11px] font-semibold tracking-wide">PI</span>
+        {agentPicker ?? (
+          <>
+            <PiLogoIcon size={15} />
+            <span className="text-[11px] font-semibold tracking-wide">PI</span>
+          </>
+        )}
         <span
           className={cn(
             "ml-0.5 size-1.5 rounded-full",

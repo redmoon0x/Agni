@@ -13,9 +13,11 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -23,6 +25,7 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 import { useStickToBottom } from "use-stick-to-bottom";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -44,11 +47,53 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { ClaudeLogoIcon } from "@/modules/acp-agent/ClaudeLogoIcon";
+import { CommandCodeLogoIcon } from "@/modules/acp-agent/CommandCodeLogoIcon";
 import {
-  clipboardImageFiles,
-} from "@/modules/agent-panel/lib/clipboardImages";
+  type AcpElicitationValues,
+  defaultElicitationValues,
+  elicitationContent,
+} from "@/modules/acp-agent/elicitation";
+import { KiloLogoIcon } from "@/modules/acp-agent/KiloLogoIcon";
+import { type AcpAgentId, acpAgent } from "@/modules/acp-agent/lib/agent";
+import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
+import {
+  cancelAcp,
+  deleteAcpSession,
+  ensureAcpStarted,
+  forkAcpSession,
+  listAcpSessions,
+  loadAcpSession,
+  loginAcp,
+  logoutAcp,
+  newAcpSession,
+  promptAcp,
+  refreshAcpTerminal,
+  respondToElicitation,
+  respondToPermission,
+  restartAcp,
+  resumeAcpSession,
+  setAcpConfigOption,
+  setAcpMode,
+  stopAcp,
+  useAcpStore,
+} from "@/modules/acp-agent/store";
+import type {
+  AcpAttachment,
+  AcpConfigOption,
+  AcpDiffChange,
+  AcpElicitationRequest,
+  AcpMessage,
+  AcpModeState,
+  AcpPermissionSubject,
+  AcpSessionInfo,
+  AcpToolCall,
+  AcpToolContent,
+} from "@/modules/acp-agent/types";
+import { clipboardImageFiles } from "@/modules/agent-panel/lib/clipboardImages";
 import {
   formatCost,
+  formatCount,
   formatTokens,
 } from "@/modules/agent-panel/lib/usage";
 import {
@@ -59,52 +104,23 @@ import {
   InlineCode,
   MarkdownCodeBlock,
 } from "@/modules/markdown/MarkdownCodeBlock";
-import { acpAgent, type AcpAgentId } from "@/modules/acp-agent/lib/agent";
-import { KiloLogoIcon } from "@/modules/acp-agent/KiloLogoIcon";
-import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
-import {
-  cancelAcp,
-  ensureAcpStarted,
-  listAcpSessions,
-  loadAcpSession,
-  newAcpSession,
-  promptAcp,
-  respondToElicitation,
-  respondToPermission,
-  restartAcp,
-  setAcpConfigOption,
-  setAcpMode,
-  stopAcp,
-  useAcpStore,
-} from "@/modules/acp-agent/store";
-import {
-  defaultElicitationValues,
-  elicitationContent,
-} from "@/modules/acp-agent/elicitation";
-import type {
-  AcpConfigOption,
-  AcpElicitationRequest,
-  AcpImageAttachment,
-  AcpMessage,
-  AcpModeState,
-  AcpSessionInfo,
-  AcpToolCall,
-  AcpToolContent,
-} from "@/modules/acp-agent/types";
-import type { WorkspaceEnv } from "@/modules/workspace";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { setAcpAdditionalDirectories } from "@/modules/settings/store";
+import { type WorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
 
 type Props = {
   agent: AcpAgentId;
   cwd: string | null;
   workspace: WorkspaceEnv;
+  agentPicker?: ReactNode;
 };
 
 type AtToken = { query: string; start: number };
 type MentionEntry = { rel: string; path: string };
 
 const markdownComponents = { code: InlineCode, pre: MarkdownCodeBlock };
-const MAX_IMAGE_ATTACHMENTS = 4;
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
 
 function runAcpAction(action: Promise<unknown>) {
   void action.catch((error) => {
@@ -127,25 +143,35 @@ function AgentMark({
   if (agent === "kilo") {
     return <KiloLogoIcon size={size} className={className} />;
   }
+  if (agent === "commandcode") {
+    return <CommandCodeLogoIcon size={size} className={className} />;
+  }
+  if (agent === "claude") {
+    return <ClaudeLogoIcon size={size} className={className} />;
+  }
   return <HugeiconsIcon icon={Robot01Icon} size={size} className={className} />;
 }
 
-function readImageAttachment(file: File): Promise<AcpImageAttachment> {
+function readAttachment(
+  file: File,
+  kind: "image" | "audio",
+): Promise<AcpAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read image"));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error("Could not read file"));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       const data = result.slice(result.indexOf(",") + 1);
       if (!data) {
-        reject(new Error("Could not encode image"));
+        reject(new Error("Could not encode file"));
         return;
       }
       resolve({
-        type: "image",
+        type: kind,
         name: file.name,
         data,
-        mimeType: file.type || "image/png",
+        mimeType: file.type || (kind === "image" ? "image/png" : "audio/mpeg"),
       });
     };
     reader.readAsDataURL(file);
@@ -164,39 +190,207 @@ function detectAtToken(value: string, caret: number): AtToken | null {
 }
 
 function contentKey(content: AcpToolContent): string {
-  if (content.type === "diff") return `diff:${content.path}`;
+  if (content.type === "diff")
+    return `diff:${content.path}:${content.changes.length}:${content.patch?.length ?? 0}`;
   if (content.type === "terminal") return `terminal:${content.terminalId}`;
-  if (content.type === "content") return `content:${content.content.text ?? ""}`;
+  if (content.type === "content")
+    return `content:${content.content.text ?? ""}`;
   return `unknown:${JSON.stringify(content.value)}`;
+}
+
+function DiffChangeList({ changes }: { changes: AcpDiffChange[] }) {
+  if (changes.length === 0) return null;
+  return (
+    <ul className="space-y-0.5 px-2.5 pt-1.5 font-mono text-[10px]">
+      {changes.map((change) => (
+        <li
+          key={`${change.operation}:${change.oldPath ?? ""}:${change.path}`}
+          className="flex items-baseline gap-1.5"
+        >
+          <span
+            className={cn(
+              "shrink-0 uppercase",
+              change.operation === "delete" && "text-destructive",
+              change.operation === "add" && "text-emerald-500",
+              (change.operation === "modify" ||
+                change.operation === "move" ||
+                change.operation === "copy") && "text-primary",
+              change.operation !== "delete" &&
+                change.operation !== "add" &&
+                change.operation !== "modify" &&
+                change.operation !== "move" &&
+                change.operation !== "copy" &&
+                "text-muted-foreground",
+            )}
+          >
+            {change.operation}
+          </span>
+          <span className="min-w-0 flex-1 break-all text-muted-foreground">
+            {change.oldPath ? `${change.oldPath} -> ${change.path}` : change.path}
+          </span>
+          {change.fileType && change.fileType !== "text" ? (
+            <span className="shrink-0 text-muted-foreground/70">
+              {change.fileType}
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function ToolContentItem({ content }: { content: AcpToolContent }) {
   if (content.type === "diff") {
+    // v2 reports `changes` plus an optional git patch; there is no
+    // old/new text pair, so the patch (or the change list) carries the render.
+    const binary =
+      content.changes.length > 0 &&
+      content.changes.every((change) => change.fileType && change.fileType !== "text");
     return (
       <div className="border-t border-border/40">
         <div className="px-2.5 pt-1.5 font-mono text-[10px] text-muted-foreground">
           {content.path}
         </div>
-        <pre className="select-text max-h-48 overflow-auto px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-          {content.newText}
-        </pre>
+        <DiffChangeList changes={content.changes} />
+        {binary ? (
+          <p className="px-2.5 pt-1.5 text-[10px] text-muted-foreground">
+            Binary change, no text preview.
+          </p>
+        ) : null}
+        {content.oldText !== null ? (
+          <pre className="select-text max-h-32 overflow-auto border-b border-destructive/10 bg-destructive/[0.025] px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-destructive/80">
+            {content.oldText}
+          </pre>
+        ) : null}
+        {content.patch ? (
+          <pre className="select-text max-h-48 overflow-auto border-t border-border/40 px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+            {content.patch}
+          </pre>
+        ) : content.oldText === null && !binary ? (
+          <pre className="select-text max-h-48 overflow-auto px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+            {content.newText || "File deleted"}
+          </pre>
+        ) : null}
       </div>
     );
   }
   if (content.type === "content") {
-    const text = content.content.text ?? "";
-    if (!text) return null;
+    return <ContentBlockView content={content.content} compact />;
+  }
+  if (content.type === "terminal") {
+    return <TerminalOutput terminalId={content.terminalId} />;
+  }
+  return null;
+}
+
+function TerminalOutput({ terminalId }: { terminalId: string }) {
+  const terminal = useAcpStore((state) => state.terminals[terminalId]);
+  const polling =
+    terminal === undefined ||
+    (terminal.source !== "agent" && terminal.state !== "exited");
+  useEffect(() => {
+    if (!polling) return;
+    void refreshAcpTerminal(terminalId);
+    const timer = window.setInterval(() => {
+      void refreshAcpTerminal(terminalId);
+    }, 900);
+    return () => window.clearInterval(timer);
+  }, [polling, terminalId]);
+  if (!terminal) {
+    return (
+      <div className="border-t border-border/40 px-2.5 py-2 font-mono text-[10px] text-muted-foreground">
+        terminal {terminalId}
+      </div>
+    );
+  }
+  return (
+    <div className="border-t border-border/40">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-2.5 pt-1.5 font-mono text-[10px] text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate">
+          {terminal.title ?? terminal.command ?? terminalId}
+        </span>
+        {terminal.cwd ? (
+          <span className="min-w-0 truncate text-muted-foreground/70" title={terminal.cwd}>
+            {terminal.cwd}
+          </span>
+        ) : null}
+        {terminal.state ? <span>{terminal.state}</span> : null}
+        {terminal.exitCode !== null ? (
+          <span>exit {terminal.exitCode}</span>
+        ) : null}
+        {terminal.signal ? <span>{terminal.signal}</span> : null}
+      </div>
+      {terminal.output ? (
+        <pre className="select-text max-h-48 overflow-auto px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+          {terminal.output}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+function ContentBlockView({
+  content,
+  compact = false,
+}: {
+  content: AcpMessage["content"][number];
+  compact?: boolean;
+}) {
+  const resource = content.resource;
+  if (content.type === "text") {
+    if (!content.text || !compact) return null;
     return (
       <pre className="select-text max-h-48 overflow-auto border-t border-border/40 px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-        {text}
+        {content.text}
       </pre>
     );
   }
-  if (content.type === "terminal") {
+  if (content.type === "image" && content.data && content.mimeType) {
     return (
-      <div className="border-t border-border/40 px-2.5 py-2 font-mono text-[10px] text-muted-foreground">
-        terminal {content.terminalId}
-      </div>
+      <img
+        src={`data:${content.mimeType};base64,${content.data}`}
+        alt={content.name ?? "Agent supplied image"}
+        className="mt-2 max-h-72 max-w-full rounded-md border border-border/50 object-contain"
+      />
+    );
+  }
+  if (content.type === "audio" && content.data && content.mimeType) {
+    return (
+      // biome-ignore lint/a11y/useMediaCaption: agent audio data URIs cannot carry a caption track
+      <audio controls className="mt-2 max-w-full">
+        <source
+          src={`data:${content.mimeType};base64,${content.data}`}
+          type={content.mimeType}
+        />
+      </audio>
+    );
+  }
+  if (content.type === "resource" && resource) {
+    const text = typeof resource.text === "string" ? resource.text : null;
+    const uri = typeof resource.uri === "string" ? resource.uri : "Resource";
+    return text ? (
+      <details className="mt-2 rounded-md border border-border/50 px-2.5 py-1.5 text-[10px]">
+        <summary className="cursor-pointer text-muted-foreground">
+          {uri}
+        </summary>
+        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">
+          {text}
+        </pre>
+      </details>
+    ) : (
+      <span className="mt-2 block text-[10px] text-muted-foreground">
+        {uri}
+      </span>
+    );
+  }
+  if (content.type === "resource_link" && content.uri) {
+    return (
+      <span
+        className="mt-2 block truncate text-[10px] text-muted-foreground"
+        title={content.uri}
+      >
+        {content.name ?? content.uri}
+      </span>
     );
   }
   return null;
@@ -220,11 +414,20 @@ function ToolRow({ tool }: { tool: AcpToolCall }) {
             tool.status === "pending" && "bg-muted-foreground/50",
             tool.status === "completed" && "bg-emerald-500",
             tool.status === "failed" && "bg-destructive",
+            tool.status === "cancelled" && "bg-muted-foreground/40",
           )}
         />
         <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
           {tool.title || tool.kind}
         </span>
+        {tool.name ? (
+          <span
+            className="max-w-32 shrink-0 truncate font-mono text-[9px] text-muted-foreground/70"
+            title={tool.name}
+          >
+            {tool.name}
+          </span>
+        ) : null}
         <span className="shrink-0 text-[9px] tracking-wide text-muted-foreground uppercase">
           {tool.kind}
         </span>
@@ -258,6 +461,14 @@ function Message({ message }: { message: AcpMessage }) {
         <div className="select-text text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
           {message.text}
         </div>
+        {message.content
+          .filter((content) => content.type !== "text")
+          .map((content, index) => (
+            <ContentBlockView
+              key={`${content.type}-${index}`}
+              content={content}
+            />
+          ))}
       </div>
     );
   }
@@ -266,6 +477,14 @@ function Message({ message }: { message: AcpMessage }) {
       <div className="flex justify-end">
         <div className="select-text max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap">
           {message.text}
+          {message.content
+            .filter((content) => content.type !== "text")
+            .map((content, index) => (
+              <ContentBlockView
+                key={`${content.type}-${index}`}
+                content={content}
+              />
+            ))}
         </div>
       </div>
     );
@@ -273,12 +492,21 @@ function Message({ message }: { message: AcpMessage }) {
   return (
     <div className="select-text text-[12px] leading-relaxed">
       <Streamdown components={markdownComponents}>{message.text}</Streamdown>
+      {message.content
+        .filter((content) => content.type !== "text")
+        .map((content, index) => (
+          <ContentBlockView
+            key={`${content.type}-${index}`}
+            content={content}
+          />
+        ))}
     </div>
   );
 }
 
 function PlanList() {
   const plan = useAcpStore((state) => state.plan);
+  const planId = useAcpStore((state) => state.planId);
   const [open, setOpen] = useState(true);
   if (plan.length === 0) return null;
   const done = plan.filter((entry) => entry.status === "completed").length;
@@ -293,6 +521,16 @@ function PlanList() {
         <span className="text-[10px] font-medium tracking-wide uppercase">
           Plan
         </span>
+        {planId ? (
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-[9px] text-muted-foreground/70"
+            title={planId}
+          >
+            {planId}
+          </span>
+        ) : (
+          <span className="flex-1" />
+        )}
         <span className="text-[10px] text-muted-foreground">
           {done}/{plan.length}
         </span>
@@ -336,6 +574,40 @@ function PlanList() {
   );
 }
 
+function PermissionSubjectDetail({ subject }: { subject: AcpPermissionSubject }) {
+  if (subject.type === "tool_call") {
+    const tool = subject.toolCall;
+    if (!tool.title && !tool.name) return null;
+    return (
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        <span className="font-medium text-foreground/80">
+          {tool.title || tool.name}
+        </span>
+        {tool.name && tool.title ? (
+          <span className="ml-1.5 font-mono text-muted-foreground/70">
+            {tool.name}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+  if (subject.type === "command") {
+    return (
+      <div className="mt-1.5 rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+        <div className="truncate font-mono text-[10px]">{subject.command}</div>
+        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+          {subject.cwd}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1.5 rounded-md border border-border/60 bg-background/60 px-2 py-1.5 font-mono text-[10px] text-muted-foreground break-all">
+      {JSON.stringify(subject.value)}
+    </div>
+  );
+}
+
 function PermissionPrompt() {
   const permission = useAcpStore((state) => state.permission);
   if (!permission) return null;
@@ -344,6 +616,16 @@ function PermissionPrompt() {
       <div className="mb-2 text-[11px] font-medium">
         {permission.title ?? "The agent wants to run a tool"}
       </div>
+      {permission.description ? (
+        <p className="mb-2 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+          {permission.description}
+        </p>
+      ) : null}
+      {permission.subject ? (
+        <div className="mb-2">
+          <PermissionSubjectDetail subject={permission.subject} />
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-1.5">
         {permission.options.map((option) => (
           <button
@@ -365,8 +647,12 @@ function PermissionPrompt() {
   );
 }
 
-function ElicitationForm({ elicitation }: { elicitation: AcpElicitationRequest }) {
-  const [values, setValues] = useState(() =>
+function ElicitationForm({
+  elicitation,
+}: {
+  elicitation: Extract<AcpElicitationRequest, { mode: "form" }>;
+}) {
+  const [values, setValues] = useState<AcpElicitationValues>(() =>
     defaultElicitationValues(elicitation.fields),
   );
   const [invalid, setInvalid] = useState(false);
@@ -394,7 +680,10 @@ function ElicitationForm({ elicitation }: { elicitation: AcpElicitationRequest }
           return (
             <div key={field.name} className="space-y-1">
               {field.type === "boolean" ? (
-                <label htmlFor={id} className="flex cursor-pointer items-center gap-2 text-[11px]">
+                <label
+                  htmlFor={id}
+                  className="flex cursor-pointer items-center gap-2 text-[11px]"
+                >
                   <input
                     id={id}
                     type="checkbox"
@@ -433,6 +722,56 @@ function ElicitationForm({ elicitation }: { elicitation: AcpElicitationRequest }
                         </option>
                       ))}
                     </select>
+                  ) : field.type === "multiselect" ? (
+                    <div className="space-y-1 rounded-md border border-border/70 bg-background px-2 py-1.5">
+                      {field.choices.map((choice) => {
+                        const selected = Array.isArray(value)
+                          ? value.includes(choice.id)
+                          : false;
+                        const optionId = `${id}-${choice.id}`;
+                        return (
+                          <label
+                            key={choice.id}
+                            htmlFor={optionId}
+                            className="flex cursor-pointer items-center gap-2 text-[11px]"
+                          >
+                            <input
+                              id={optionId}
+                              type="checkbox"
+                              checked={selected}
+                              onChange={(event) =>
+                                setValues((current) => {
+                                  const existing = current[field.name];
+                                  const ids = Array.isArray(existing) ? existing : [];
+                                  return {
+                                    ...current,
+                                    [field.name]: event.target.checked
+                                      ? [...ids, choice.id]
+                                      : ids.filter((item) => item !== choice.id),
+                                  };
+                                })
+                              }
+                            />
+                            {choice.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : field.type === "json" ? (
+                    <textarea
+                      id={id}
+                      rows={4}
+                      spellCheck={false}
+                      value={typeof value === "string" ? value : ""}
+                      onChange={(event) =>
+                        setValues((current) => ({
+                          ...current,
+                          [field.name]: event.target.value,
+                        }))
+                      }
+                      placeholder={'{ "key": "value" }'}
+                      className="w-full resize-y rounded-md border border-border/70 bg-background px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary/70"
+                    />
                   ) : (
                     <input
                       id={id}
@@ -487,7 +826,105 @@ function ElicitationForm({ elicitation }: { elicitation: AcpElicitationRequest }
 function ElicitationPrompt() {
   const elicitation = useAcpStore((state) => state.elicitation);
   if (!elicitation) return null;
-  return <ElicitationForm key={String(elicitation.id)} elicitation={elicitation} />;
+  if (elicitation.mode === "url") {
+    return (
+      <UrlElicitation key={String(elicitation.id)} elicitation={elicitation} />
+    );
+  }
+  if (elicitation.mode === "other") {
+    return <OpaqueElicitation elicitation={elicitation} />;
+  }
+  return (
+    <ElicitationForm key={String(elicitation.id)} elicitation={elicitation} />
+  );
+}
+
+/** `_`-prefixed and future elicitation modes are never rendered as a known
+ *  mode. The user can still decline, and the raw payload is preserved. */
+function OpaqueElicitation({
+  elicitation,
+}: {
+  elicitation: Extract<AcpElicitationRequest, { mode: "other" }>;
+}) {
+  return (
+    <div className="mx-2 mb-2 rounded-lg border border-border/60 bg-foreground/[0.02] p-2.5">
+      <div className="text-[11px] font-medium">Unsupported request</div>
+      <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+        {elicitation.message}
+      </p>
+      <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">
+        mode: {elicitation.rawMode || "(unspecified)"}
+      </p>
+      <button
+        type="button"
+        onClick={() => respondToElicitation("decline")}
+        className="mt-2.5 rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05]"
+      >
+        Decline
+      </button>
+    </div>
+  );
+}
+
+function UrlElicitation({
+  elicitation,
+}: {
+  elicitation: Extract<AcpElicitationRequest, { mode: "url" }>;
+}) {
+  let host = elicitation.url;
+  try {
+    host = new URL(elicitation.url).host;
+  } catch {
+    // Keep the raw value when the URL cannot be parsed.
+  }
+  const respond = (action: "accept" | "decline" | "cancel") => {
+    if (action === "accept") {
+      void openUrl(elicitation.url).catch(() => {});
+    }
+    respondToElicitation(action);
+  };
+  return (
+    <div className="mx-2 mb-2 rounded-lg border border-primary/30 bg-primary/[0.04] p-2.5">
+      <div className="text-[11px] font-medium">
+        {elicitation.title ?? "The agent wants to open a link"}
+      </div>
+      <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+        {elicitation.message}
+      </p>
+      <div className="mt-2 rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+        <div className="text-[10px] text-muted-foreground">
+          Opens in your browser:{" "}
+          <span className="font-medium text-foreground">{host}</span>
+        </div>
+        <div className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground">
+          {elicitation.url}
+        </div>
+      </div>
+      <div className="mt-2 flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => respond("accept")}
+          className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:bg-primary/20"
+        >
+          Open link
+        </button>
+        <button
+          type="button"
+          onClick={() => respond("decline")}
+          className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05]"
+        >
+          Decline
+        </button>
+        <button
+          type="button"
+          onClick={() => respond("cancel")}
+          className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05]"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function ConfigSelect({ option }: { option: AcpConfigOption }) {
@@ -514,7 +951,9 @@ function ConfigSelect({ option }: { option: AcpConfigOption }) {
         {option.options.map((value) => (
           <DropdownMenuItem
             key={value.value}
-            onSelect={() => runAcpAction(setAcpConfigOption(option.id, value.value))}
+            onSelect={() =>
+              runAcpAction(setAcpConfigOption(option.id, value.value))
+            }
           >
             <span className="min-w-0 flex-1 truncate">{value.name}</span>
             {value.value === option.currentValue ? (
@@ -675,6 +1114,51 @@ function formatSessionTime(value: string | null): string {
   });
 }
 
+function SessionActions({ sessionId }: { sessionId: string }) {
+  const capabilities = useAcpStore((state) => state.capabilities);
+  if (
+    !capabilities.sessionResume &&
+    !capabilities.sessionDelete &&
+    !capabilities.sessionFork
+  ) {
+    return null;
+  }
+  return (
+    <div className="mr-1 flex shrink-0 items-center gap-1">
+      {capabilities.sessionResume ? (
+        <button
+          type="button"
+          title="Resume without replaying history"
+          onClick={() => runAcpAction(resumeAcpSession(sessionId))}
+          className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
+        >
+          Resume
+        </button>
+      ) : null}
+      {capabilities.sessionFork ? (
+        <button
+          type="button"
+          title="Fork this session into a new one"
+          onClick={() => runAcpAction(forkAcpSession(sessionId))}
+          className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
+        >
+          Fork
+        </button>
+      ) : null}
+      {capabilities.sessionDelete ? (
+        <button
+          type="button"
+          title="Delete session"
+          onClick={() => runAcpAction(deleteAcpSession(sessionId))}
+          className="rounded px-1.5 py-1 text-[10px] text-destructive/80 hover:bg-destructive/10"
+        >
+          Delete
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function SessionSwitcherDialog({
   open,
   onOpenChange,
@@ -684,16 +1168,22 @@ function SessionSwitcherDialog({
 }) {
   const currentId = useAcpStore((state) => state.sessionId);
   const [sessions, setSessions] = useState<AcpSessionInfo[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setSessions(null);
+    setNextCursor(null);
+    setLoadingMore(false);
     setQuery("");
     void listAcpSessions()
-      .then((items) => {
-        if (!cancelled) setSessions(items);
+      .then((page) => {
+        if (cancelled) return;
+        setSessions(page.sessions);
+        setNextCursor(page.nextCursor);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -704,6 +1194,30 @@ function SessionSwitcherDialog({
       cancelled = true;
     };
   }, [open]);
+
+  const loadMore = () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    void listAcpSessions(nextCursor)
+      .then((page) => {
+        setSessions((current) => {
+          const existing = new Set(
+            (current ?? []).map((session) => session.sessionId),
+          );
+          return [
+            ...(current ?? []),
+            ...page.sessions.filter(
+              (session) => !existing.has(session.sessionId),
+            ),
+          ];
+        });
+        setNextCursor(page.nextCursor);
+      })
+      .catch((error) => {
+        useAcpStore.setState({ rpcError: String(error) });
+      })
+      .finally(() => setLoadingMore(false));
+  };
 
   const needle = query.trim().toLowerCase();
   const filtered =
@@ -744,50 +1258,198 @@ function SessionSwitcherDialog({
             </p>
           ) : (
             filtered.map((session) => (
-              <button
+              <div
                 key={session.sessionId}
-                type="button"
-                onClick={() => {
-                  runAcpAction(loadAcpSession(session.sessionId));
-                  onOpenChange(false);
-                }}
                 className={cn(
-                  "flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left hover:bg-accent hover:text-accent-foreground",
+                  "flex items-center rounded-md hover:bg-accent hover:text-accent-foreground",
                   session.sessionId === currentId && "bg-foreground/[0.05]",
                 )}
               >
-                <span className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
-                    {session.title || session.sessionId}
-                  </span>
-                  {session.sessionId === currentId ? (
-                    <HugeiconsIcon
-                      icon={Tick02Icon}
-                      size={12}
-                      className="shrink-0"
-                    />
-                  ) : null}
-                </span>
-                <span className="flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground">
-                  {session.cwd ? (
-                    <span className="min-w-0 truncate">{session.cwd}</span>
-                  ) : null}
-                  {session.updatedAt ? (
-                    <span className="shrink-0">
-                      {formatSessionTime(session.updatedAt)}
+                <button
+                  type="button"
+                  onClick={() => {
+                    runAcpAction(loadAcpSession(session.sessionId));
+                    onOpenChange(false);
+                  }}
+                  className="flex min-w-0 flex-1 flex-col gap-0.5 px-2.5 py-2 text-left"
+                >
+                  <span className="flex w-full items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
+                      {session.title || session.sessionId}
                     </span>
-                  ) : null}
-                </span>
-              </button>
+                    {session.sessionId === currentId ? (
+                      <HugeiconsIcon
+                        icon={Tick02Icon}
+                        size={12}
+                        className="shrink-0"
+                      />
+                    ) : null}
+                  </span>
+                  <span className="flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground">
+                    {session.cwd ? (
+                      <span className="min-w-0 truncate">{session.cwd}</span>
+                    ) : null}
+                    {session.updatedAt ? (
+                      <span className="shrink-0">
+                        {formatSessionTime(session.updatedAt)}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+                <SessionActions sessionId={session.sessionId} />
+              </div>
             ))
           )}
+          {nextCursor && !needle && filtered !== null ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="mt-1 w-full rounded-md border border-border/60 px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-50"
+            >
+              {loadingMore ? "Loading..." : "Load more"}
+            </button>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }) {
+function ExtraFoldersDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const directories = usePreferencesStore(
+    (state) => state.acpAdditionalDirectories,
+  );
+  const canRestart = useAcpStore((state) => state.sessionConfig !== null);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async (next: string[]) => {
+    setError(null);
+    try {
+      await setAcpAdditionalDirectories(next);
+    } catch (cause) {
+      setError(String(cause));
+    }
+  };
+
+  const add = () => {
+    const value = draft.trim();
+    if (!value) return;
+    if (!/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(value)) {
+      setError("Enter an absolute path.");
+      return;
+    }
+    if (directories.some((dir) => dir.toLowerCase() === value.toLowerCase())) {
+      setError("That folder is already included.");
+      return;
+    }
+    void save([...directories, value]);
+    setDraft("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Extra folders</DialogTitle>
+          <DialogDescription>
+            Additional workspace roots for agent sessions, beyond the project
+            folder. Applied when a session starts; agents without the additional
+            directories capability ignore them.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-1.5">
+          <input
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                add();
+              }
+            }}
+            placeholder="Absolute folder path"
+            className="min-w-0 flex-1 rounded-md border border-border/70 bg-transparent px-2.5 py-1.5 text-[12px] outline-none placeholder:text-muted-foreground/70"
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0 text-[11px]"
+            onClick={add}
+          >
+            Add
+          </Button>
+        </div>
+        {directories.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border/70 px-3 py-6 text-center text-[12px] text-muted-foreground">
+            No extra folders.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {directories.map((directory) => (
+              <div
+                key={directory}
+                className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/40 px-3 py-2"
+              >
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                  {directory}
+                </span>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="xs"
+                  className="text-[11px]"
+                  onClick={() =>
+                    void save(
+                      directories.filter((entry) => entry !== directory),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] text-muted-foreground">
+            Files and terminal commands outside the session roots are rejected.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5 px-2.5 text-[11px]"
+            disabled={!canRestart}
+            onClick={() => void restartAcp().catch(() => {})}
+          >
+            <HugeiconsIcon icon={RefreshIcon} size={12} strokeWidth={2} />
+            Restart agent
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AcpComposer({
+  agent,
+  root,
+}: {
+  agent: AcpAgentId;
+  root: string | null;
+}) {
   const connection = useAcpStore((state) => state.connection);
   const isStreaming = useAcpStore((state) => state.isStreaming);
   const capabilities = useAcpStore((state) => state.capabilities);
@@ -800,12 +1462,18 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
   const [atHighlight, setAtHighlight] = useState(0);
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [mentions, setMentions] = useState<MentionEntry[]>([]);
-  const [attachments, setAttachments] = useState<AcpImageAttachment[]>([]);
+  const [attachments, setAttachments] = useState<AcpAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   const canMention = capabilities.promptEmbeddedContext;
-  const canAttach = capabilities.promptImage;
+  const canAttach = capabilities.promptImage || capabilities.promptAudio;
+  const attachmentAccept = [
+    capabilities.promptImage ? "image/*" : null,
+    capabilities.promptAudio ? "audio/*" : null,
+  ]
+    .filter(Boolean)
+    .join(",");
   const slashQuery = /^\/(\S*)$/.exec(input)?.[1];
   const commandSuggestions =
     slashQuery === undefined
@@ -833,11 +1501,15 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
   const modeOption = configOptions.find(
     (option) => option.category === "mode" && option.type === "select",
   );
+  const modelConfigOptions = configOptions.filter(
+    (option) => option.category === "model_config",
+  );
   const otherOptions = configOptions.filter(
     (option) =>
       option !== modelOption &&
       option !== thoughtOption &&
-      option !== modeOption,
+      option !== modeOption &&
+      !modelConfigOptions.includes(option),
   );
   const showModeSelect = !modeOption && modeState !== null;
 
@@ -885,7 +1557,7 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
       await promptAcp({
         text: text || "Analyze the attached context.",
         mentions: usedMentions,
-        images: canAttach ? attachments : [],
+        attachments: canAttach ? attachments : [],
       });
     } catch (error) {
       setInput(text);
@@ -896,35 +1568,48 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
     }
   };
 
-  const addImages = async (files: FileList | readonly File[] | null) => {
+  const addAttachments = async (files: FileList | readonly File[] | null) => {
     if (!files?.length) return;
-    const nextFiles = Array.from(files).filter((file) =>
-      file.type.startsWith("image/"),
+    const nextFiles = Array.from(files).flatMap(
+      (file): { file: File; kind: "image" | "audio" }[] => {
+        if (file.type.startsWith("image/") && capabilities.promptImage) {
+          return [{ file, kind: "image" }];
+        }
+        if (file.type.startsWith("audio/") && capabilities.promptAudio) {
+          return [{ file, kind: "audio" }];
+        }
+        return [];
+      },
     );
     if (nextFiles.length !== files.length) {
-      useAcpStore.setState({ rpcError: "Only image files can be attached." });
+      useAcpStore.setState({
+        rpcError: "This agent does not accept that attachment type.",
+      });
     }
-    const available = MAX_IMAGE_ATTACHMENTS - attachments.length;
+    const available = MAX_ATTACHMENTS - attachments.length;
     const selected = nextFiles.slice(0, available);
     const currentBytes = attachments.reduce(
-      (total, image) => total + Math.ceil((image.data.length * 3) / 4),
+      (total, attachment) =>
+        total + Math.ceil((attachment.data.length * 3) / 4),
       0,
     );
-    const accepted: File[] = [];
+    const accepted: { file: File; kind: "image" | "audio" }[] = [];
     let totalBytes = currentBytes;
-    for (const file of selected) {
-      if (totalBytes + file.size > MAX_IMAGE_BYTES) break;
-      accepted.push(file);
-      totalBytes += file.size;
+    for (const entry of selected) {
+      if (totalBytes + entry.file.size > MAX_ATTACHMENT_BYTES) break;
+      accepted.push(entry);
+      totalBytes += entry.file.size;
     }
     if (accepted.length !== selected.length || nextFiles.length > available) {
       useAcpStore.setState({
-        rpcError: "Up to 4 images with a combined size of 6 MB.",
+        rpcError: "Up to 4 attachments with a combined size of 6 MB.",
       });
     }
     try {
-      const images = await Promise.all(accepted.map(readImageAttachment));
-      setAttachments((current) => [...current, ...images]);
+      const next = await Promise.all(
+        accepted.map((entry) => readAttachment(entry.file, entry.kind)),
+      );
+      setAttachments((current) => [...current, ...next]);
     } catch (error) {
       useAcpStore.setState({ rpcError: String(error) });
     } finally {
@@ -933,10 +1618,11 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
   };
 
   const handleImagePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!capabilities.promptImage) return;
     const images = clipboardImageFiles(event.clipboardData);
     if (images.length === 0) return;
     event.preventDefault();
-    void addImages(images);
+    void addAttachments(images);
   };
 
   const safeAtHighlight =
@@ -1067,24 +1753,30 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
       <div className="rounded-xl border border-border/80 bg-background shadow-sm focus-within:border-ring/70">
         {attachments.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 px-3 pt-2">
-            {attachments.map((image) => (
+            {attachments.map((attachment) => (
               <button
-                key={`${image.name}-${image.data.length}`}
+                key={`${attachment.name}-${attachment.data.length}`}
                 type="button"
-                title={`Remove ${image.name}`}
+                title={`Remove ${attachment.name}`}
                 onClick={() =>
                   setAttachments((current) =>
-                    current.filter((candidate) => candidate !== image),
+                    current.filter((candidate) => candidate !== attachment),
                   )
                 }
                 className="flex max-w-36 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.1] hover:text-foreground"
               >
-                <img
-                  src={`data:${image.mimeType};base64,${image.data}`}
-                  alt=""
-                  className="size-4 rounded-sm object-cover"
-                />
-                <span className="truncate">{image.name}</span>
+                {attachment.type === "image" ? (
+                  <img
+                    src={`data:${attachment.mimeType};base64,${attachment.data}`}
+                    alt=""
+                    className="size-4 rounded-sm object-cover"
+                  />
+                ) : (
+                  <span className="rounded-sm bg-foreground/[0.08] px-1 text-[9px] uppercase">
+                    audio
+                  </span>
+                )}
+                <span className="truncate">{attachment.name}</span>
               </button>
             ))}
           </div>
@@ -1119,24 +1811,37 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
               <input
                 ref={imageInputRef}
                 type="file"
-                accept="image/*"
+                accept={attachmentAccept}
                 multiple
                 className="sr-only"
-                onChange={(event) => void addImages(event.target.files)}
+                onChange={(event) => void addAttachments(event.target.files)}
               />
               <button
                 type="button"
-                title="Choose or paste an image"
-                disabled={attachments.length >= MAX_IMAGE_ATTACHMENTS}
+                title={
+                  capabilities.promptImage && capabilities.promptAudio
+                    ? "Attach an image or audio clip"
+                    : capabilities.promptImage
+                      ? "Choose or paste an image"
+                      : "Attach an audio clip"
+                }
+                disabled={attachments.length >= MAX_ATTACHMENTS}
                 onClick={() => imageInputRef.current?.click()}
                 className="rounded-md px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-50"
               >
-                Image
+                Attach
               </button>
             </>
           ) : null}
           <span className="min-w-0 flex-1" />
           {modelOption ? <ModelPicker option={modelOption} /> : null}
+          {modelConfigOptions.map((option) =>
+            option.type === "boolean" ? (
+              <ConfigToggle key={option.id} option={option} />
+            ) : (
+              <ConfigSelect key={option.id} option={option} />
+            ),
+          )}
           {thoughtOption ? <ConfigSelect option={thoughtOption} /> : null}
           {modeOption ? <ConfigSelect option={modeOption} /> : null}
           {showModeSelect && modeState ? (
@@ -1156,9 +1861,7 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
               connection !== "ready" ||
               (!isStreaming && !input.trim() && attachments.length === 0)
             }
-            onClick={() =>
-              isStreaming ? cancelAcp() : void submit()
-            }
+            onClick={() => (isStreaming ? cancelAcp() : void submit())}
             className="ml-0.5 flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-35"
           >
             <HugeiconsIcon
@@ -1173,23 +1876,28 @@ function AcpComposer({ agent, root }: { agent: AcpAgentId; root: string | null }
   );
 }
 
-export function AcpPanel({ agent, cwd, workspace }: Props) {
+export function AcpPanel({ agent, cwd, workspace, agentPicker }: Props) {
   const state = useAcpStore();
   const descriptor = acpAgent(agent);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
-  const startRef = useRef(0);
+  const [extraFoldersOpen, setExtraFoldersOpen] = useState(false);
+  const extraFolderCount = usePreferencesStore(
+    (s) => s.acpAdditionalDirectories.length,
+  );
   const { scrollRef, contentRef } = useStickToBottom({
     initial: "instant",
     resize: "instant",
   });
 
   useEffect(() => {
-    const gen = ++startRef.current;
-    void stopAcp().then(() => {
-      if (gen !== startRef.current) return;
-      void ensureAcpStarted(agent, cwd, workspace).catch(() => {});
-    });
+    void ensureAcpStarted(agent, cwd, workspace).catch(() => {});
   }, [agent, cwd, workspace]);
+
+  useEffect(() => {
+    return () => {
+      void stopAcp();
+    };
+  }, []);
 
   const items = useMemo(() => {
     const messages = state.messages.map((message) => ({
@@ -1210,41 +1918,102 @@ export function AcpPanel({ agent, cwd, workspace }: Props) {
     state.connection === "exited" ||
     state.connection === "stopped";
   const empty = items.length === 0;
+  const configMatches =
+    state.sessionConfig !== null &&
+    state.sessionConfig.agent === agent &&
+    state.sessionConfig.cwd === cwd &&
+    workspaceScopeKey(state.sessionConfig.workspace) ===
+      workspaceScopeKey(workspace);
+  const switching = state.connection === "starting" || !configMatches;
+  const cwdLabel = cwd
+    ? (cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd)
+    : null;
   const agentLabel = state.agentInfo.title ?? state.agentInfo.name;
   const usageCost = formatCost(
     state.usage?.cost?.amount,
     state.usage?.cost?.currency,
   );
   const usageText = state.usage
-    ? `${formatTokens(state.usage.used, state.usage.size)} tokens${
-        usageCost ? ` · ${usageCost}` : ""
-      }`
+    ? `${
+        state.usage.size > 0
+          ? formatTokens(state.usage.used, state.usage.size)
+          : `${formatCount(state.usage.used)} tokens`
+      }${usageCost ? ` · ${usageCost}` : ""}`
     : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <AgentMark agent={agent} size={16} />
-        <span className="text-[11px] font-semibold tracking-wide uppercase">
-          {descriptor.label}
-        </span>
+        {agentPicker ?? (
+          <>
+            <AgentMark agent={agent} size={16} />
+            <span className="text-[11px] font-semibold tracking-wide uppercase">
+              {descriptor.label}
+            </span>
+          </>
+        )}
         <span
           className={cn(
             "ml-0.5 size-1.5 rounded-full",
-            state.connection === "ready" && !state.isStreaming && "bg-emerald-500",
+            state.connection === "ready" &&
+              !state.isStreaming &&
+              "bg-emerald-500",
             state.isStreaming && "animate-pulse bg-primary",
-            state.connection === "starting" && "animate-pulse bg-muted-foreground",
+            state.connection === "starting" &&
+              "animate-pulse bg-muted-foreground",
             unavailable && "bg-destructive",
             state.connection === "idle" && "bg-muted-foreground/50",
           )}
         />
-        <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
-          {usageText ??
-            (state.isStreaming
-              ? "Working"
-              : (agentLabel ??
-                (state.connection === "ready" ? "Ready" : state.connection)))}
-        </span>
+        {cwdLabel ? (
+          <span
+            className="min-w-0 max-w-28 shrink-0 truncate text-[10px] text-muted-foreground/70"
+            title={cwd ?? undefined}
+          >
+            {cwdLabel}
+          </span>
+        ) : null}
+        {/* Live lifecycle state outranks the last-known usage figure. */}
+          {state.sessionState === "requires_action" ? (
+            <span className="min-w-0 flex-1 truncate text-[10px] text-primary">
+              Waiting on you
+            </span>
+          ) : state.isStreaming ? (
+            <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+              Working
+            </span>
+          ) : state.notice ? (
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-[10px]",
+              state.notice.kind === "auth"
+                ? "text-primary"
+                : state.notice.severity === "error"
+                  ? "text-destructive"
+                  : state.notice.severity === "warning"
+                    ? "text-amber-500"
+                    : "text-muted-foreground",
+            )}
+          >
+            {state.notice.severity && state.notice.severity !== "info"
+              ? `${state.notice.severity}: ${state.notice.text}`
+              : state.notice.text}
+          </span>
+        ) : state.lastStopReason === "error" && state.lastStopError ? (
+          <span
+            className="min-w-0 flex-1 truncate text-[10px] text-destructive"
+            title={state.lastStopError}
+          >
+            {state.lastStopError}
+          </span>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+            {usageText ??
+              (state.sessionTitle ??
+                agentLabel ??
+                (state.connection === "ready" ? "Ready" : state.connection))}
+          </span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -1266,6 +2035,24 @@ export function AcpPanel({ agent, cwd, workspace }: Props) {
                 Switch session
               </DropdownMenuItem>
             ) : null}
+            {state.authMethods.map((method) => (
+              <DropdownMenuItem
+                key={method.methodId}
+                onSelect={() => runAcpAction(loginAcp(method.methodId))}
+              >
+                Sign in: {method.name}
+              </DropdownMenuItem>
+            ))}
+            {(state.protocolVersion === 2 || state.capabilities.authLogout) &&
+            state.authMethods.length > 0 ? (
+              <DropdownMenuItem onSelect={() => runAcpAction(logoutAcp())}>
+                Sign out
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem onSelect={() => setExtraFoldersOpen(true)}>
+              Extra folders
+              {extraFolderCount > 0 ? ` (${extraFolderCount})` : ""}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => runAcpAction(restartAcp())}>
               <HugeiconsIcon icon={RefreshIcon} />
               Restart
@@ -1281,7 +2068,7 @@ export function AcpPanel({ agent, cwd, workspace }: Props) {
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         <div ref={contentRef} className="min-h-full">
-          {state.connection === "starting" ? (
+          {switching ? (
             <div className="flex h-full items-center justify-center gap-2 text-[11px] text-muted-foreground">
               <HugeiconsIcon
                 icon={Loading03Icon}
@@ -1350,6 +2137,10 @@ export function AcpPanel({ agent, cwd, workspace }: Props) {
       <SessionSwitcherDialog
         open={sessionSwitcherOpen}
         onOpenChange={setSessionSwitcherOpen}
+      />
+      <ExtraFoldersDialog
+        open={extraFoldersOpen}
+        onOpenChange={setExtraFoldersOpen}
       />
     </div>
   );

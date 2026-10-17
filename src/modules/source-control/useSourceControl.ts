@@ -2,6 +2,7 @@ import {
   native,
   type GitRepoInfo,
   type GitStatusSnapshot,
+  type PullStrategy,
 } from "@/lib/native";
 import { useWorkspaceEnvStore, workspaceScopeKey } from "@/modules/workspace";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,10 +17,17 @@ export type SourceControlRemoteActionMode =
   | "contextual"
   | SourceControlRemoteAction;
 
+/** Paths left unmerged by a pull that stopped on a conflict. */
+export type SourceControlConflicts = {
+  files: string[];
+  strategy: PullStrategy;
+};
+
 export type SourceControlRemoteActionResult = {
   ok: boolean;
   action: SourceControlRemoteAction | null;
-  error?: string;
+  error?: string | null;
+  conflicts?: SourceControlConflicts;
   blocked?: "diverged" | "missing-upstream" | "no-repo";
 };
 
@@ -35,6 +43,7 @@ export type SourceControlSummary = {
   localError: string | null;
   busyAction: SourceControlRemoteAction | null;
   lastRemoteError: string | null;
+  conflicts: SourceControlConflicts | null;
   applyStatus: (
     updater: (status: GitStatusSnapshot) => GitStatusSnapshot,
   ) => void;
@@ -43,6 +52,7 @@ export type SourceControlSummary = {
   }) => Promise<void>;
   runRemoteAction: (
     mode?: SourceControlRemoteActionMode,
+    options?: { pullStrategy?: PullStrategy },
   ) => Promise<SourceControlRemoteActionResult>;
 };
 
@@ -62,6 +72,7 @@ type SourceControlSummaryState = {
   localError: string | null;
   busyAction: SourceControlRemoteAction | null;
   lastRemoteError: string | null;
+  conflicts: SourceControlConflicts | null;
 };
 
 function normalizeError(error: unknown): string {
@@ -77,10 +88,23 @@ function getContextualAction(
   status: GitStatusSnapshot | null,
 ): SourceControlRemoteAction | null {
   if (!status?.upstream) return null;
-  if (status.ahead > 0 && status.behind > 0) return null;
+  // Pull wins whenever the branch is behind. A rebase pull reconciles a
+  // diverged branch, so divergence is no longer a dead end.
   if (status.behind > 0) return "pull";
   if (status.ahead > 0) return "push";
   return "fetch";
+}
+
+/**
+ * A diverged branch cannot fast-forward, so rebase is the only strategy that
+ * reconciles it without a merge commit. An explicit choice always wins.
+ */
+export function resolvePullStrategy(
+  status: Pick<GitStatusSnapshot, "ahead" | "behind">,
+  override?: PullStrategy,
+): PullStrategy {
+  if (override) return override;
+  return status.ahead > 0 && status.behind > 0 ? "rebase" : "ffOnly";
 }
 
 export function getSourceControlRemoteIndicator(
@@ -96,10 +120,11 @@ export function getSourceControlRemoteIndicator(
     return {
       visible: true,
       label: `↑${summary.ahead} ↓${summary.behind}`,
-      title:
-        "Branch has diverged from upstream. Use Source Control or the terminal to resolve it.",
-      disabled: true,
-      action: null,
+      title: `Branch has diverged from upstream. Pull with rebase to reconcile ${summary.behind} remote ${
+        summary.behind === 1 ? "commit" : "commits"
+      }.`,
+      disabled: summary.busyAction !== null,
+      action: "pull",
     };
   }
   if (summary.behind > 0) {
@@ -108,7 +133,7 @@ export function getSourceControlRemoteIndicator(
       label: `↓${summary.behind}`,
       title: `Pull ${summary.behind} remote ${
         summary.behind === 1 ? "commit" : "commits"
-      } with fast-forward only.`,
+      }.`,
       disabled: summary.busyAction !== null,
       action: "pull",
     };
@@ -157,6 +182,7 @@ export function useSourceControl(
     localError: null,
     busyAction: null,
     lastRemoteError: null,
+    conflicts: null,
   });
   const stateRef = useRef(state);
   const requestIdRef = useRef(0);
@@ -187,6 +213,7 @@ export function useSourceControl(
       localError: null,
       busyAction: null,
       lastRemoteError: null,
+      conflicts: null,
     });
   }, [workspaceKey]);
 
@@ -216,6 +243,7 @@ export function useSourceControl(
           localError: null,
           busyAction: null,
           lastRemoteError: null,
+          conflicts: null,
         });
         return;
       }
@@ -368,6 +396,7 @@ export function useSourceControl(
   const runRemoteAction = useCallback(
     async (
       mode: SourceControlRemoteActionMode = "contextual",
+      options?: { pullStrategy?: PullStrategy },
     ): Promise<SourceControlRemoteActionResult> => {
       const { repo, status } = stateRef.current;
       if (!repo || !status) {
@@ -377,30 +406,61 @@ export function useSourceControl(
         return { ok: false, action: null, blocked: "missing-upstream" };
       }
 
-      const action = mode === "contextual" ? getContextualAction(status) : mode;
-      if (!action) {
+      const requested =
+        mode === "contextual" ? getContextualAction(status) : mode;
+      if (!requested) {
         return { ok: false, action: null, blocked: "diverged" };
       }
+      // A diverged branch cannot fast-forward, so rebase is the only strategy
+      // that reconciles it without a merge commit.
+      const action: SourceControlRemoteAction = requested;
+      const pullStrategy = resolvePullStrategy(status, options?.pullStrategy);
 
-      setState((current) => ({ ...current, busyAction: action }));
+      setState((current) => ({
+        ...current,
+        busyAction: action,
+        conflicts: null,
+      }));
 
       try {
         if (action === "fetch") {
           await native.gitFetch(repo.repoRoot);
           touchAutoFetch(autoFetchByRepoRef.current, repo.repoRoot);
         } else if (action === "pull") {
-          await native.gitFetch(repo.repoRoot);
           touchAutoFetch(autoFetchByRepoRef.current, repo.repoRoot);
-          await native.gitPullFfOnly(repo.repoRoot);
+          const result = await native.gitPull(repo.repoRoot, pullStrategy);
+          if (result.error) throw new Error(result.error);
+          if (result.conflicts.length > 0) {
+            const conflicts = {
+              files: result.conflicts,
+              strategy: result.strategy,
+            };
+            setState((current) => ({ ...current, conflicts }));
+            await refresh({ remote: "never" }).catch(() => {});
+            return {
+              ok: false,
+              action,
+              conflicts,
+              error: null,
+            };
+          }
         } else {
           await native.gitPush(repo.repoRoot);
         }
-        setState((current) => ({ ...current, lastRemoteError: null }));
+        setState((current) => ({
+          ...current,
+          lastRemoteError: null,
+          conflicts: null,
+        }));
         await refresh({ remote: "never" });
         return { ok: true, action };
       } catch (error) {
         const message = normalizeError(error);
-        setState((current) => ({ ...current, lastRemoteError: message }));
+        setState((current) => ({
+          ...current,
+          lastRemoteError: message,
+          conflicts: null,
+        }));
         await refresh({ remote: "never" }).catch(() => {});
         return { ok: false, action, error: message };
       } finally {
@@ -421,6 +481,7 @@ export function useSourceControl(
         localError: null,
         busyAction: null,
         lastRemoteError: null,
+        conflicts: null,
       });
       return;
     }
@@ -477,6 +538,7 @@ export function useSourceControl(
       localError: state.localError,
       busyAction: state.busyAction,
       lastRemoteError: state.lastRemoteError,
+      conflicts: state.conflicts,
       applyStatus,
       refresh,
       runRemoteAction,

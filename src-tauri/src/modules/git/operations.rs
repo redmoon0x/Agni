@@ -9,8 +9,9 @@ use crate::modules::git::process::{
 };
 use crate::modules::git::types::{
     DiscardEntry, GitBranch, GitCommitFileChange, GitCommitResult, GitDeleteMergedBranchesResult,
-    GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot, GitPushResult,
-    GitRepoInfo, GitStatusSnapshot, TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
+    GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot, GitPullResult,
+    GitPushResult, GitRepoInfo, GitStatusSnapshot, PullStrategy, TextSource,
+    DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
 };
 use crate::modules::git::utils::{
     authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream, ResolvedGitDirectory,
@@ -1120,20 +1121,140 @@ pub fn fetch(
     ensure_success(&output, "git fetch failed")
 }
 
-pub fn pull_ff_only(
+/// Paths git reports as unmerged. Non-empty after a failed pull means the repo
+/// is sitting in a conflicted state the user has to resolve.
+fn conflicted_paths(repo_root: &ResolvedGitDirectory) -> Vec<String> {
+    run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["diff", "--name-only", "--diff-filter=U"],
+        DEFAULT_TIMEOUT_SECS,
+    )
+    .map(|output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(50)
+            .map(ToOwned::to_owned)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// `(ahead, behind)` against the tracked upstream. `(0, 0)` when there is no
+/// upstream or the branch is level with it.
+fn ahead_behind(repo_root: &ResolvedGitDirectory) -> (u32, u32) {
+    run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+        DEFAULT_TIMEOUT_SECS,
+    )
+    .ok()
+    .and_then(|output| {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut parts = text.split_whitespace();
+        Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+    })
+    .unwrap_or((0, 0))
+}
+
+pub fn pull(
     registry: &WorkspaceRegistry,
     repo_root: &str,
     workspace: &WorkspaceEnv,
-) -> Result<()> {
+    strategy: PullStrategy,
+) -> Result<GitPullResult> {
     let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
     ensure_git_available(&repo_root.workspace)?;
-    let output = run_git(
+
+    let upstream = git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )?;
+    let Some(upstream) = upstream else {
+        return Err(GitError::NoUpstream);
+    };
+    let (remote, branch) = split_upstream(&upstream);
+
+    // Always fetch first so the up-to-date check below sees the real remote.
+    let fetched = run_git(
         &repo_root.workspace,
         Some(&repo_root.git_path),
-        ["pull", "--ff-only"],
+        ["fetch", "--prune"],
         NETWORK_TIMEOUT_SECS,
     )?;
-    ensure_success(&output, "git pull --ff-only failed")
+    ensure_success(&fetched, "git fetch failed")?;
+
+    if ahead_behind(&repo_root) == (0, 0) {
+        return Ok(GitPullResult {
+            remote,
+            branch,
+            pulled: false,
+            strategy,
+            conflicts: Vec::new(),
+            error: None,
+        });
+    }
+
+    let output = match strategy.flag() {
+        Some(flag) => run_git(
+            &repo_root.workspace,
+            Some(&repo_root.git_path),
+            ["pull", flag],
+            NETWORK_TIMEOUT_SECS,
+        ),
+        None => run_git(
+            &repo_root.workspace,
+            Some(&repo_root.git_path),
+            ["pull"],
+            NETWORK_TIMEOUT_SECS,
+        ),
+    }?;
+
+    if output.exit_code != Some(0) {
+        // Conflicts are a state, not a failure: report them as data so the
+        // panel can list the files instead of parsing an error string.
+        let conflicts = conflicted_paths(&repo_root);
+        let error = if conflicts.is_empty() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let detail = detail.trim();
+            Some(if detail.is_empty() {
+                format!("git pull failed on {}", strategy_label(strategy))
+            } else {
+                detail.to_string()
+            })
+        } else {
+            None
+        };
+        return Ok(GitPullResult {
+            remote,
+            branch,
+            pulled: false,
+            strategy,
+            conflicts,
+            error,
+        });
+    }
+
+    Ok(GitPullResult {
+        remote,
+        branch,
+        pulled: true,
+        strategy,
+        conflicts: Vec::new(),
+        error: None,
+    })
+}
+
+fn strategy_label(strategy: PullStrategy) -> &'static str {
+    match strategy {
+        PullStrategy::FfOnly => "a fast-forward",
+        PullStrategy::Rebase => "a rebase",
+        PullStrategy::Merge => "a merge",
+    }
 }
 
 fn nothing_to_commit(output: &GitOutput) -> bool {
@@ -1180,6 +1301,26 @@ mod tests {
         assert!(!sha_is_safe("abc 123"));
         assert!(!sha_is_safe(&"a".repeat(65)));
         assert!(!sha_is_safe(";rm -rf /"));
+    }
+
+    #[test]
+    fn pull_strategy_maps_to_git_pull_flags() {
+        assert_eq!(PullStrategy::FfOnly.flag(), Some("--ff-only"));
+        assert_eq!(PullStrategy::Rebase.flag(), Some("--rebase"));
+        // Merge keeps git's own default rather than passing an empty arg.
+        assert_eq!(PullStrategy::Merge.flag(), None);
+        assert_eq!(PullStrategy::default(), PullStrategy::FfOnly);
+    }
+
+    #[test]
+    fn pull_strategy_deserializes_from_camel_case() {
+        let parse = |raw: &str| {
+            serde_json::from_str::<PullStrategy>(raw).expect("valid strategy")
+        };
+        assert_eq!(parse("\"ffOnly\""), PullStrategy::FfOnly);
+        assert_eq!(parse("\"rebase\""), PullStrategy::Rebase);
+        assert_eq!(parse("\"merge\""), PullStrategy::Merge);
+        assert!(serde_json::from_str::<PullStrategy>("\"squash\"").is_err());
     }
 
     #[test]

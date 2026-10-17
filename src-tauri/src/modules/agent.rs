@@ -8,8 +8,15 @@ use crate::modules::workspace::WorkspaceEnv;
 
 /// Agents Agni can launch, paired with the executable each one needs. Kept in
 /// step with `ACP_AGENTS` in `acp.rs` plus Pi, which has no ACP descriptor.
-const AGENT_PROGRAMS: &[(&str, &str)] =
-    &[("opencode", "opencode"), ("kilo", "kilo"), ("pi", "pi")];
+const AGENT_PROGRAMS: &[(&str, &str)] = &[
+    ("opencode", "opencode"),
+    ("kilo", "kilo"),
+    ("commandcode", "commandcode"),
+    // Claude launches through the npx ACP adapter (see acp.rs) but is only
+    // offered when the Claude Code CLI itself is on PATH.
+    ("claude", "claude"),
+    ("pi", "pi"),
+];
 
 const HOOK_EVENTS: [(&str, &str); 3] = [
     ("UserPromptSubmit", "working"),

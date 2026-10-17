@@ -133,6 +133,48 @@ pub struct GitPushResult {
     pub pushed: bool,
 }
 
+/// How a pull reconciles the current branch with its upstream. `FfOnly` is the
+/// safe default and refuses to create a merge commit; the other two are the
+/// explicit escape hatches for a branch that has diverged.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PullStrategy {
+    #[default]
+    FfOnly,
+    Rebase,
+    Merge,
+}
+
+impl PullStrategy {
+    /// The `git pull` flag for this strategy. `Merge` keeps git's own default
+    /// rather than passing an empty argument.
+    pub(crate) fn flag(self) -> Option<&'static str> {
+        match self {
+            PullStrategy::FfOnly => Some("--ff-only"),
+            PullStrategy::Rebase => Some("--rebase"),
+            PullStrategy::Merge => None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitPullResult {
+    pub remote: Option<String>,
+    pub branch: Option<String>,
+    /// False when the branch was already level with its upstream, or when the
+    /// pull stopped before integrating anything. Check `conflicts` and `error`
+    /// to tell those apart.
+    pub pulled: bool,
+    pub strategy: PullStrategy,
+    /// Paths still unmerged after a failed pull. Non-empty means the repo is
+    /// mid-merge or mid-rebase and the user must resolve before continuing.
+    pub conflicts: Vec<String>,
+    /// Set when git refused the pull outright (auth, network, or a
+    /// fast-forward refusal on a diverged branch).
+    pub error: Option<String>,
+}
+
 pub(crate) struct GitOutput {
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,

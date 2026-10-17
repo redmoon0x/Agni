@@ -17,6 +17,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -26,6 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { IS_MAC } from "@/lib/platform";
+import type { PullStrategy } from "@/lib/native";
 import { cn } from "@/lib/utils";
 import {
   copyToClipboard,
@@ -93,8 +101,33 @@ const ROW_HEIGHTS = {
   entry: 30,
 } as const;
 
+const CONFLICT_BANNER_HEIGHT = 46;
+
+const PULL_STRATEGIES: {
+  id: PullStrategy;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    id: "ffOnly",
+    label: "Fast-forward",
+    hint: "Refuses to create a merge commit",
+  },
+  {
+    id: "rebase",
+    label: "Rebase",
+    hint: "Replays local commits on top of the remote",
+  },
+  {
+    id: "merge",
+    label: "Merge",
+    hint: "Creates a merge commit",
+  },
+];
+
 type RowDescriptor =
-  | { kind: "banner-diverged"; key: string }
+  | { kind: "banner-diverged"; key: string; behind: number }
+  | { kind: "banner-conflicts"; key: string; files: string[]; strategy: PullStrategy }
   | {
       kind: "list-header";
       key: string;
@@ -202,10 +235,10 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     hasUpstream &&
     !!scm.status &&
     scm.status.behind > 0 &&
-    !isDiverged &&
     !scm.actionBusy &&
     !sourceControl.busyAction;
   const canFetch = hasUpstream && !scm.actionBusy && !sourceControl.busyAction;
+  const conflicts = sourceControl.conflicts;
 
   const footerFeedback = useMemo(() => {
     if (scm.actionError)
@@ -246,9 +279,16 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     void sourceControl.runRemoteAction("fetch");
   }, [sourceControl]);
 
-  const handlePull = useCallback(() => {
-    void sourceControl.runRemoteAction("pull");
-  }, [sourceControl]);
+  const handlePull = useCallback(
+    (strategy: PullStrategy) => {
+      void sourceControl.runRemoteAction("pull", { pullStrategy: strategy });
+    },
+    [sourceControl],
+  );
+
+  const handlePullRebase = useCallback(() => {
+    handlePull("rebase");
+  }, [handlePull]);
 
   const handleBranchChanged = useCallback(async () => {
     await sourceControl.refresh({ remote: "never" });
@@ -256,8 +296,20 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
   const rows = useMemo<RowDescriptor[]>(() => {
     const result: RowDescriptor[] = [];
+    if (conflicts) {
+      result.push({
+        kind: "banner-conflicts",
+        key: "banner-conflicts",
+        files: conflicts.files,
+        strategy: conflicts.strategy,
+      });
+    }
     if (isDiverged) {
-      result.push({ kind: "banner-diverged", key: "banner-diverged" });
+      result.push({
+        kind: "banner-diverged",
+        key: "banner-diverged",
+        behind: scm.status?.behind ?? 0,
+      });
     }
     if (stagedCount > 0) {
       result.push({
@@ -285,7 +337,9 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     }
     return result;
   }, [
+    conflicts,
     isDiverged,
+    scm.status?.behind,
     scm.stagedEntries,
     scm.unstagedEntries,
     stagedCount,
@@ -320,6 +374,9 @@ export const SourceControlPanel = memo(function SourceControlPanel({
       const row = rows[index];
       if (!row) return ROW_HEIGHTS.entry;
       switch (row.kind) {
+        case "banner-conflicts":
+          // Header + up to 3 file lines + the resolve hint below them.
+          return CONFLICT_BANNER_HEIGHT + Math.min(row.files.length, 3) * 15;
         case "banner-diverged":
           return ROW_HEIGHTS.banner;
         case "list-header":
@@ -432,6 +489,16 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
   const fetchBusy = sourceControl.busyAction === "fetch";
   const pullBusy = sourceControl.busyAction === "pull";
+  const behindCount = scm.status?.behind ?? 0;
+  const pullLabel = pullBusy
+    ? "Pulling…"
+    : !hasUpstream
+      ? "No upstream configured"
+      : isDiverged
+        ? `Pull ${behindCount} remote commits with rebase`
+        : behindCount === 0
+          ? "Already up to date"
+          : `Pull ${behindCount} ${behindCount === 1 ? "commit" : "commits"}`;
 
   return (
     <TooltipProvider delayDuration={800} skipDelayDuration={300}>
@@ -502,32 +569,13 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                 />
               )}
             </IconActionButton>
-            <IconActionButton
-              label={
-                pullBusy
-                  ? "Pulling…"
-                  : isDiverged
-                    ? "Branch diverged — resolve in terminal"
-                    : !hasUpstream
-                      ? "No upstream configured"
-                      : (scm.status?.behind ?? 0) === 0
-                        ? "Already up to date"
-                        : `Pull ${scm.status?.behind ?? 0} commits (fast-forward)`
-              }
+            <PullMenu
+              label={pullLabel}
+              busy={pullBusy}
               disabled={!canPull}
-              onClick={handlePull}
-              side="bottom"
-            >
-              {pullBusy ? (
-                <Spinner className="size-3" />
-              ) : (
-                <HugeiconsIcon
-                  icon={Download01Icon}
-                  size={14}
-                  strokeWidth={1.9}
-                />
-              )}
-            </IconActionButton>
+              diverged={isDiverged}
+              onSelect={handlePull}
+            />
             <IconActionButton
               label="Refresh source control"
               disabled={isRefreshing || !!scm.actionBusy}
@@ -751,6 +799,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                             onUnstageEntry={scm.unstageEntry}
                             onDiscardEntry={scm.requestDiscardEntry}
                             onOpenFile={onOpenFile}
+                            onPullRebase={handlePullRebase}
                           />
                         </div>
                       );
@@ -861,13 +910,18 @@ type RowRendererProps = {
   onUnstageEntry: (entry: SourceControlEntry) => Promise<void>;
   onDiscardEntry: (entry: SourceControlEntry) => void;
   onOpenFile?: (absolutePath: string) => void;
+  onPullRebase: () => void;
 };
 
 const RowRenderer = memo(function RowRenderer(props: RowRendererProps) {
   const { row } = props;
   switch (row.kind) {
+    case "banner-conflicts":
+      return (
+        <ConflictsBanner files={row.files} strategy={row.strategy} />
+      );
     case "banner-diverged":
-      return <DivergedBanner />;
+      return <DivergedBanner behind={row.behind} onRebase={props.onPullRebase} />;
     case "list-header":
       return <ListHeader {...props} row={row} />;
     case "entry":
@@ -875,7 +929,80 @@ const RowRenderer = memo(function RowRenderer(props: RowRendererProps) {
   }
 });
 
-function DivergedBanner() {
+function PullMenu({
+  label,
+  busy,
+  disabled,
+  diverged,
+  onSelect,
+}: {
+  label: string;
+  busy: boolean;
+  disabled: boolean;
+  diverged: boolean;
+  onSelect: (strategy: PullStrategy) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="size-6 p-3 cursor-pointer rounded-md text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
+              aria-label={label}
+              disabled={disabled || busy}
+            >
+              {busy ? (
+                <Spinner className="size-3" />
+              ) : (
+                <HugeiconsIcon icon={Download01Icon} size={14} strokeWidth={1.9} />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent
+          side="bottom"
+          className={cn(SOURCE_CONTROL_TOOLTIP_CLASS, "text-[10.5px]")}
+        >
+          {label}
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel className="text-[10px]">Pull strategy</DropdownMenuLabel>
+        {PULL_STRATEGIES.map((strategy) => (
+          <DropdownMenuItem
+            key={strategy.id}
+            disabled={disabled || busy}
+            onSelect={() => onSelect(strategy.id)}
+            className="flex-col items-start gap-0.5 py-1.5"
+          >
+            <span className="flex w-full items-center gap-2 text-[12px]">
+              <span className="flex-1">{strategy.label}</span>
+              {diverged && strategy.id === "rebase" ? (
+                <span className="text-[9.5px] uppercase tracking-wide text-muted-foreground">
+                  resolves divergence
+                </span>
+              ) : null}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {strategy.hint}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function DivergedBanner({
+  behind,
+  onRebase,
+}: {
+  behind: number;
+  onRebase: () => void;
+}) {
   return (
     <div className="mx-2 mt-1 flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-foreground/[0.04] px-2 text-[10.5px] leading-none text-muted-foreground">
       <HugeiconsIcon
@@ -888,8 +1015,61 @@ function DivergedBanner() {
         <span className="font-medium text-foreground/85">
           Diverged from upstream
         </span>
-        <span className="ml-1 opacity-75">— resolve in terminal</span>
+        <span className="ml-1 opacity-75">— {behind} remote</span>
       </span>
+      <button
+        type="button"
+        onClick={onRebase}
+        className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-medium text-foreground/85 hover:bg-foreground/10 hover:text-foreground"
+      >
+        Pull with rebase
+      </button>
+    </div>
+  );
+}
+
+function ConflictsBanner({
+  files,
+  strategy,
+}: {
+  files: string[];
+  strategy: PullStrategy;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? files : files.slice(0, 3);
+  return (
+    <div className="mx-2 mt-1 rounded-md border border-destructive/40 bg-destructive/[0.07] px-2 py-1.5 text-[10.5px] leading-tight text-destructive">
+      <div className="flex items-center gap-1.5">
+        <HugeiconsIcon
+          icon={Alert02Icon}
+          size={11}
+          strokeWidth={1.9}
+          className="shrink-0"
+        />
+        <span className="min-w-0 flex-1 truncate font-medium">
+          Pull stopped with {files.length}{" "}
+          {files.length === 1 ? "conflict" : "conflicts"} ({strategy})
+        </span>
+      </div>
+      <ul className="mt-1 space-y-0.5 pl-[15px] font-mono text-[10px] opacity-90">
+        {shown.map((file) => (
+          <li key={file} className="truncate">
+            {file}
+          </li>
+        ))}
+      </ul>
+      {files.length > 3 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1 cursor-pointer pl-[15px] text-[10px] underline underline-offset-2 hover:no-underline"
+        >
+          {expanded ? "Show less" : `Show ${files.length - 3} more`}
+        </button>
+      ) : null}
+      <p className="mt-1 pl-[15px] text-[10px] opacity-80">
+        Resolve the files, then commit or continue in the terminal.
+      </p>
     </div>
   );
 }

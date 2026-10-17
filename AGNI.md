@@ -86,7 +86,18 @@ Every pane sits under a `ErrorBoundary` (`src/components/ErrorBoundary.tsx`) and
 - **theme/** — custom theme engine. `ThemeProvider` + `applyTheme` write CSS variables; built-in presets (`agni-default`, nord, tide, catppuccin, tokyo-night, caffeine, gruvbox, sage, rose-pine), user themes via `customThemes.ts`.
 - **updater/** — auto-updater UI.
 - **agents/** — terminal agent notifications. `agentStore.ts` tracks sessions, `route.ts` routes notifications (OS-notify when unfocused, toast when focused-but-hidden), `NotificationBell` in header. Terminal detection is Rust-side (`pty/agent_detect.rs`).
+- **acp-agent/** — ACP client (Agent Client Protocol) speaking v1 and v2 over stdio. `store.ts` owns the JSON-RPC lifecycle (batch frames, version negotiation, session list/load/resume/fork/delete), `acpState.ts` is the pure `session/update` reducer, `elicitation.ts` parses the JSON-Schema form surface, `terminalAuth.ts` renders the shell line for `type: "terminal"` auth methods. Agent-owned terminal display is polled through the Rust `acp_terminal_*` commands.
 - **command-palette/** — `Cmd+Shift+P` command palette.
+
+### ACP client notes
+
+- Negotiates `protocolVersion` 1 or 2 per connection and shapes payloads to the negotiated version.
+- v2 specifics: `session/prompt` acknowledges insertion (completion arrives as an idle `state_update`), tool calls are upserts with omit/`null`/value patch semantics, `plan_update` nests entries under a `planId`, agent terminals stream base64 `terminal_output_chunk` frames and `terminal_update` snapshots, diffs carry `changes[]` plus an optional git `patch`, permissions use a required `title` plus a `tool_call` or `command` `subject`.
+- v1 specifics: `clientCapabilities.session.notices` and `clientCapabilities.session.compaction` must be advertised or agents must not send `notice`, `compaction_update` or `compaction_summary_chunk`.
+- `session/fork` is a draft RFD, gated on the agent advertising `session: { fork: {} }`.
+- MCP is not supported: there is no user-facing MCP server configuration. `mcpServers` is still sent as an empty array because ACP v1 makes the field required on `session/new`, `session/load` and `session/resume`; v2 makes it optional and omits it.
+- `_meta` is read but never sent: ACP makes it optional and implementations must not assume its contents, so no extension payload is advertised.
+- Unknown enum and union values are preserved rather than dropped (`rawMode`, `{ type: "unknown" }` subjects) so a future ACP variant can still be replayed or proxied.
 
 ### UI conventions
 

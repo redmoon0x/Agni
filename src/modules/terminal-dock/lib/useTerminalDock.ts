@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { disposeSession } from "@/modules/terminal/lib/useTerminalSession";
 import {
   findLeafCwd,
@@ -12,6 +12,7 @@ import {
   type PaneNode,
   type SplitDir,
 } from "@/modules/terminal/lib/panes";
+import { registerTerminalDock } from "@/modules/terminal-dock/lib/dockBridge";
 
 // Matches the renderer slot pool size -- over this we'd evict an active leaf.
 export const MAX_DOCK_PANES = 4;
@@ -49,6 +50,12 @@ export function useTerminalDock(initialCwd?: string) {
     });
     return newLeafId;
   }, []);
+
+  // Expose the live dock to non-React callers (ACP terminal auth).
+  useEffect(() => {
+    registerTerminalDock({ splitActive });
+    return () => registerTerminalDock(null);
+  }, [splitActive]);
 
   const focusPane = useCallback((leafId: number) => {
     setState((s) => {

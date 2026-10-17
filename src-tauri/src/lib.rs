@@ -1,6 +1,8 @@
 pub mod modules;
 
-use modules::{acp, agent, format, fs, git, http, pets, pi, pick_folder, pty, shell, workspace};
+use modules::{
+    acp, acp_terminal, agent, format, fs, git, http, pets, pi, pick_folder, pty, shell, workspace,
+};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
@@ -202,6 +204,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(pi::PiState::default())
         .manage(acp::AcpState::default())
+        .manage(acp_terminal::AcpTerminalState::default())
         .manage(format::FormatState::default())
         .manage(fs::watch::FsWatchState::default())
         .manage({
@@ -228,6 +231,13 @@ pub fn run() {
             acp::acp_send,
             acp::acp_stop,
             acp::acp_close_all,
+            acp::acp_registry_list,
+            acp_terminal::acp_terminal_create,
+            acp_terminal::acp_terminal_output,
+            acp_terminal::acp_terminal_wait_for_exit,
+            acp_terminal::acp_terminal_kill,
+            acp_terminal::acp_terminal_release,
+            acp_terminal::acp_terminal_close_all,
             pets::pets_list,
             pets::pets_sprite,
             pets::pets_import,
@@ -271,7 +281,7 @@ pub fn run() {
             git::commands::git_discard,
             git::commands::git_commit,
             git::commands::git_fetch,
-            git::commands::git_pull_ff_only,
+            git::commands::git_pull,
             git::commands::git_push,
             git::commands::git_log,
             git::commands::git_show_commit,

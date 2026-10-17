@@ -1,4 +1,5 @@
 pub mod acp;
+pub mod acp_terminal;
 pub mod agent;
 pub mod format;
 pub mod fs;

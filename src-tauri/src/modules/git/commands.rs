@@ -3,8 +3,8 @@ use tauri::{AppHandle, Manager};
 use crate::modules::git::operations;
 use crate::modules::git::types::{
     DiscardEntry, GitBranch, GitCommitFileChange, GitCommitResult, GitDeleteMergedBranchesResult,
-    GitDiffContentResult, GitDiffResult, GitLogEntry, GitPanelSnapshot, GitPushResult, GitRepoInfo,
-    GitStatusSnapshot,
+    GitDiffContentResult, GitDiffResult, GitLogEntry, GitPanelSnapshot, GitPullResult,
+    GitPushResult, GitRepoInfo, GitStatusSnapshot, PullStrategy,
 };
 use crate::modules::workspace::{WorkspaceEnv, WorkspaceRegistry};
 
@@ -225,14 +225,16 @@ pub async fn git_fetch(
 }
 
 #[tauri::command]
-pub async fn git_pull_ff_only(
+pub async fn git_pull(
     repo_root: String,
+    strategy: Option<PullStrategy>,
     workspace: Option<WorkspaceEnv>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<GitPullResult, String> {
+    let strategy = strategy.unwrap_or_default();
     let workspace = WorkspaceEnv::from_option(workspace);
     blocking(app, move |r| {
-        operations::pull_ff_only(r, &repo_root, &workspace).map_err(Into::into)
+        operations::pull(r, &repo_root, &workspace, strategy).map_err(Into::into)
     })
     .await
 }

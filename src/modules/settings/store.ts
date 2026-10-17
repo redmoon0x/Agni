@@ -1,7 +1,5 @@
-import {
-  ACP_AGENTS,
-  type AcpAgentId,
-} from "@/modules/acp-agent/lib/agent";
+import { ACP_AGENTS, type AcpAgentId } from "@/modules/acp-agent/lib/agent";
+import { parseDirectoryList } from "@/modules/acp-agent/lifecycle";
 import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LazyStore } from "@tauri-apps/plugin-store";
@@ -73,6 +71,7 @@ export type Preferences = {
   zoomLevel: number;
   agentNotifications: boolean;
   agentPanelAgent: AgentId;
+  acpAdditionalDirectories: string[];
   petId: string | null;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
   editorAutoSave: boolean;
@@ -102,6 +101,7 @@ const KEY_TERMINAL_SCROLLBACK = "terminalScrollback";
 const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
 const KEY_AGENT_PANEL_AGENT = "agentPanelAgent";
+const KEY_ACP_ADDITIONAL_DIRECTORIES = "acpAdditionalDirectories";
 const KEY_PET_ID = "petId";
 const KEY_SHORTCUTS = "shortcuts";
 const KEY_EDITOR_AUTO_SAVE = "editorAutoSave";
@@ -144,6 +144,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   zoomLevel: 1.0,
   agentNotifications: true,
   agentPanelAgent: "pi",
+  acpAdditionalDirectories: [],
   petId: null,
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
   editorAutoSave: false,
@@ -214,13 +215,15 @@ export async function loadPreferences(): Promise<Preferences> {
     agentPanelAgent:
       parseAgentId(get<unknown>(KEY_AGENT_PANEL_AGENT)) ??
       DEFAULT_PREFERENCES.agentPanelAgent,
+    acpAdditionalDirectories: parseDirectoryList(
+      get<unknown>(KEY_ACP_ADDITIONAL_DIRECTORIES),
+    ),
     petId: get<string | null>(KEY_PET_ID) ?? DEFAULT_PREFERENCES.petId,
     shortcuts:
       get<Record<ShortcutId, KeyBinding[]>>(KEY_SHORTCUTS) ??
       DEFAULT_PREFERENCES.shortcuts,
     editorAutoSave:
-      get<boolean>(KEY_EDITOR_AUTO_SAVE) ??
-      DEFAULT_PREFERENCES.editorAutoSave,
+      get<boolean>(KEY_EDITOR_AUTO_SAVE) ?? DEFAULT_PREFERENCES.editorAutoSave,
     editorAutoSaveDelay: clampAutoSaveDelay(
       get<number>(KEY_EDITOR_AUTO_SAVE_DELAY) ??
         DEFAULT_PREFERENCES.editorAutoSaveDelay,
@@ -262,7 +265,9 @@ export async function setBackgroundKind(value: BackgroundKind): Promise<void> {
   await writePref(KEY_BG_KIND, value);
 }
 
-export async function setBackgroundImageId(value: string | null): Promise<void> {
+export async function setBackgroundImageId(
+  value: string | null,
+): Promise<void> {
   await writePref(KEY_BG_IMAGE_ID, value);
 }
 
@@ -299,7 +304,9 @@ export async function setTerminalFontFamily(value: string): Promise<void> {
 }
 
 export async function setTerminalLetterSpacing(value: number): Promise<void> {
-  const clamped = Number.isFinite(value) ? Math.max(-10, Math.min(10, Math.round(value))) : 0;
+  const clamped = Number.isFinite(value)
+    ? Math.max(-10, Math.min(10, Math.round(value)))
+    : 0;
   await writePref(KEY_TERMINAL_LETTER_SPACING, clamped);
 }
 
@@ -346,7 +353,9 @@ export async function setEditorFormatOnSave(value: boolean): Promise<void> {
   await writePref(KEY_EDITOR_FORMAT_ON_SAVE, value);
 }
 
-export async function setEditorInlineDiagnostics(value: boolean): Promise<void> {
+export async function setEditorInlineDiagnostics(
+  value: boolean,
+): Promise<void> {
   await writePref(KEY_EDITOR_INLINE_DIAGNOSTICS, value);
 }
 
@@ -356,6 +365,12 @@ export async function setAgentNotifications(value: boolean): Promise<void> {
 
 export async function setAgentPanelAgent(value: AgentId): Promise<void> {
   await writePref(KEY_AGENT_PANEL_AGENT, value);
+}
+
+export async function setAcpAdditionalDirectories(
+  value: string[],
+): Promise<void> {
+  await writePref(KEY_ACP_ADDITIONAL_DIRECTORIES, parseDirectoryList(value));
 }
 
 export async function setPetId(value: string | null): Promise<void> {
@@ -397,6 +412,7 @@ export async function onPreferencesChange(
     [KEY_ZOOM_LEVEL]: "zoomLevel",
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
     [KEY_AGENT_PANEL_AGENT]: "agentPanelAgent",
+    [KEY_ACP_ADDITIONAL_DIRECTORIES]: "acpAdditionalDirectories",
     [KEY_PET_ID]: "petId",
     [KEY_SHORTCUTS]: "shortcuts",
     [KEY_EDITOR_AUTO_SAVE]: "editorAutoSave",

@@ -11,6 +11,20 @@ export const ACP_AGENTS = {
     program: "kilo",
     args: ["acp"],
   },
+  commandcode: {
+    id: "commandcode",
+    label: "CommandCode",
+    program: "commandcode",
+    args: ["acp"],
+  },
+  claude: {
+    // Claude Code has no native ACP mode; Zed's adapter bridges it over npx.
+    // Launch truth lives in acp.rs; availability is probed on the `claude` CLI.
+    id: "claude",
+    label: "Claude Code",
+    program: "npx",
+    args: ["-y", "@zed-industries/claude-code-acp"],
+  },
 } as const;
 
 export type AcpAgentId = keyof typeof ACP_AGENTS;

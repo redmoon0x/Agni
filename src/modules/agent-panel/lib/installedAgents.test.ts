@@ -28,6 +28,8 @@ describe("orderKnownAgents", () => {
       "pi",
       "opencode",
       "kilo",
+      "commandcode",
+      "claude",
     ]);
   });
 });

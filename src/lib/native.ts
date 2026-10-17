@@ -119,6 +119,17 @@ export type GitPushResult = {
   pushed: boolean;
 };
 
+export type PullStrategy = "ffOnly" | "rebase" | "merge";
+
+export type GitPullResult = {
+  remote: string | null;
+  branch: string | null;
+  pulled: boolean;
+  strategy: PullStrategy;
+  conflicts: string[];
+  error: string | null;
+};
+
 export async function gitStatus(
   repoRoot: string,
   workspace?: WorkspaceEnv,
@@ -261,11 +272,16 @@ export async function gitFetch(
   await invoke("git_fetch", { repoRoot, workspace: workspace ?? null });
 }
 
-export async function gitPullFfOnly(
+export async function gitPull(
   repoRoot: string,
+  strategy: PullStrategy = "ffOnly",
   workspace?: WorkspaceEnv,
-): Promise<void> {
-  await invoke("git_pull_ff_only", { repoRoot, workspace: workspace ?? null });
+): Promise<GitPullResult> {
+  return invoke("git_pull", {
+    repoRoot,
+    strategy,
+    workspace: workspace ?? null,
+  });
 }
 
 export async function gitPush(
@@ -363,7 +379,7 @@ export const native = {
   gitUnstage,
   gitDiscard,
   gitFetch,
-  gitPullFfOnly,
+  gitPull,
   gitPush,
   gitRemoteUrl,
   gitDiffContent,

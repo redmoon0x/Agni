@@ -36,6 +36,7 @@ ensureMonoFontsLoaded();
 await invoke("pty_close_all").catch(() => {});
 await invoke("pi_close_all").catch(() => {});
 await invoke("acp_close_all").catch(() => {});
+await invoke("acp_terminal_close_all").catch(() => {});
 
 // Seed before first paint so default tab mounts at target cwd (no flicker).
 await initLaunchDir();

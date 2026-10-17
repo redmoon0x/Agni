@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use serde::Serialize;
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shared_child::SharedChild;
 use tauri::ipc::Channel;
@@ -17,12 +18,74 @@ use crate::modules::jsonl::{
 use crate::modules::workspace::{authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 
 const MAX_STDERR_LINE_BYTES: usize = 16 * 1024;
+const ACP_REGISTRY_URL: &str =
+    "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+const ACP_REGISTRY_MAX_BYTES: usize = 2 * 1024 * 1024;
+const ACP_REGISTRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+#[derive(Deserialize)]
+struct RawAcpRegistry {
+    version: String,
+    agents: Vec<RawAcpRegistryAgent>,
+}
+
+#[derive(Deserialize)]
+struct RawAcpRegistryAgent {
+    id: String,
+    name: String,
+    version: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    repository: Option<String>,
+    #[serde(default)]
+    website: Option<String>,
+    #[serde(default)]
+    authors: Vec<String>,
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    distribution: Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpRegistry {
+    version: String,
+    agents: Vec<AcpRegistryAgent>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpRegistryAgent {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    repository: Option<String>,
+    website: Option<String>,
+    authors: Vec<String>,
+    license: Option<String>,
+    distribution: AcpRegistryDistribution,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpRegistryDistribution {
+    kind: String,
+    install_command: Option<String>,
+}
 
 /// ACP-speaking agents Agni can launch. Adding an agent is one row here plus a
 /// matching descriptor in the frontend registry.
 const ACP_AGENTS: &[(&str, &str, &[&str])] = &[
     ("opencode", "opencode", &["acp"]),
     ("kilo", "kilo", &["acp"]),
+    ("commandcode", "commandcode", &["acp"]),
+    // Claude Code speaks ACP only through Zed's adapter, launched via npx so no
+    // global install is needed. Availability is probed on the `claude` CLI in
+    // agent.rs, not on `npx` (which almost everyone with Node already has).
+    ("claude", "npx", &["-y", "@zed-industries/claude-code-acp"]),
 ];
 
 fn resolve_acp_agent(agent: &str) -> Result<(&'static str, &'static [&'static str]), String> {
@@ -70,6 +133,158 @@ impl Drop for AcpState {
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn acp_registry_list() -> Result<AcpRegistry, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(ACP_REGISTRY_TIMEOUT)
+        .timeout(ACP_REGISTRY_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent("Agni ACP discovery")
+        .build()
+        .map_err(|error| format!("Could not create registry client: {error}"))?;
+    let response = client
+        .get(ACP_REGISTRY_URL)
+        .send()
+        .await
+        .map_err(|error| format!("Could not load the ACP Registry: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("The ACP Registry returned an error: {error}"))?;
+
+    if response
+        .content_length()
+        .is_some_and(|length| length > ACP_REGISTRY_MAX_BYTES as u64)
+    {
+        return Err("The ACP Registry response is too large".into());
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("Could not read the ACP Registry: {error}"))?;
+        if bytes.len().saturating_add(chunk.len()) > ACP_REGISTRY_MAX_BYTES {
+            return Err("The ACP Registry response is too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    let registry: RawAcpRegistry = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("The ACP Registry data is invalid: {error}"))?;
+    if registry.version.is_empty() || registry.version.len() > 32 {
+        return Err("The ACP Registry version is invalid".into());
+    }
+
+    Ok(AcpRegistry {
+        version: registry.version,
+        agents: registry
+            .agents
+            .into_iter()
+            .filter_map(sanitize_registry_agent)
+            .take(250)
+            .collect(),
+    })
+}
+
+fn sanitize_registry_agent(agent: RawAcpRegistryAgent) -> Option<AcpRegistryAgent> {
+    if !is_registry_id(&agent.id)
+        || !is_registry_text(&agent.name, 120)
+        || !is_registry_text(&agent.version, 64)
+        || agent.description.len() > 2_000
+    {
+        return None;
+    }
+
+    Some(AcpRegistryAgent {
+        id: agent.id,
+        name: agent.name,
+        version: agent.version,
+        description: agent.description.trim().to_string(),
+        repository: agent.repository.and_then(sanitize_registry_url),
+        website: agent.website.and_then(sanitize_registry_url),
+        authors: agent
+            .authors
+            .into_iter()
+            .filter(|author| is_registry_text(author, 160))
+            .take(10)
+            .collect(),
+        license: agent
+            .license
+            .filter(|license| is_registry_text(license, 160)),
+        distribution: registry_distribution(&agent.distribution),
+    })
+}
+
+fn is_registry_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn is_registry_text(value: &str, max_len: usize) -> bool {
+    !value.trim().is_empty() && value.len() <= max_len && !value.chars().any(char::is_control)
+}
+
+fn sanitize_registry_url(value: String) -> Option<String> {
+    let parsed = reqwest::Url::parse(&value).ok()?;
+    (parsed.scheme() == "https" && parsed.host_str().is_some()).then_some(value)
+}
+
+fn registry_distribution(distribution: &Value) -> AcpRegistryDistribution {
+    let Some(npx) = distribution.get("npx").and_then(Value::as_object) else {
+        return AcpRegistryDistribution {
+            kind: if distribution.get("binary").is_some() {
+                "binary".into()
+            } else {
+                "other".into()
+            },
+            install_command: None,
+        };
+    };
+    let Some(package) = npx.get("package").and_then(Value::as_str) else {
+        return AcpRegistryDistribution {
+            kind: "npx".into(),
+            install_command: None,
+        };
+    };
+    let args = npx
+        .get("args")
+        .and_then(Value::as_array)
+        .map_or_else(Vec::new, |values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        });
+    let safe = is_shell_token(package)
+        && args.len() <= 20
+        && args.iter().all(|argument| is_shell_token(argument));
+    AcpRegistryDistribution {
+        kind: "npx".into(),
+        install_command: safe.then(|| {
+            std::iter::once("npx".to_string())
+                .chain(std::iter::once("--yes".to_string()))
+                .chain(std::iter::once(package.to_string()))
+                .chain(args)
+                .collect::<Vec<_>>()
+                .join(" ")
+        }),
+    }
+}
+
+fn is_shell_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'@' | b'%' | b'_' | b'+' | b'.' | b',' | b'/' | b':' | b'=' | b'-'
+                )
+        })
 }
 
 #[tauri::command]
@@ -283,6 +498,7 @@ fn agent_label(agent: &str) -> &'static str {
     match agent {
         "opencode" => "OpenCode",
         "kilo" => "Kilo",
+        "commandcode" => "CommandCode",
         _ => "ACP agent",
     }
 }
@@ -409,6 +625,50 @@ mod tests {
         let (program, args) = resolve_acp_agent("kilo").unwrap();
         assert_eq!(program, "kilo");
         assert_eq!(args, ["acp"]);
+        let (program, args) = resolve_acp_agent("commandcode").unwrap();
+        assert_eq!(program, "commandcode");
+        assert_eq!(args, ["acp"]);
+        let (program, args) = resolve_acp_agent("claude").unwrap();
+        assert_eq!(program, "npx");
+        assert_eq!(args, ["-y", "@zed-industries/claude-code-acp"]);
         assert!(resolve_acp_agent("nope").is_err());
+    }
+
+    #[test]
+    fn registry_npx_command_requires_safe_tokens() {
+        let valid = registry_distribution(&serde_json::json!({
+            "npx": { "package": "@example/agent", "args": ["--acp"] }
+        }));
+        assert_eq!(valid.kind, "npx");
+        assert_eq!(
+            valid.install_command.as_deref(),
+            Some("npx --yes @example/agent --acp")
+        );
+
+        let unsafe_value = registry_distribution(&serde_json::json!({
+            "npx": { "package": "agent;not-safe" }
+        }));
+        assert_eq!(unsafe_value.install_command, None);
+    }
+
+    #[test]
+    fn registry_agents_reject_invalid_ids_and_urls() {
+        let invalid = RawAcpRegistryAgent {
+            id: "Not valid".into(),
+            name: "Example".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            repository: None,
+            website: None,
+            authors: vec![],
+            license: None,
+            distribution: serde_json::json!({}),
+        };
+        assert!(sanitize_registry_agent(invalid).is_none());
+        assert!(sanitize_registry_url("http://example.com".into()).is_none());
+        assert_eq!(
+            sanitize_registry_url("https://example.com".into()).as_deref(),
+            Some("https://example.com")
+        );
     }
 }

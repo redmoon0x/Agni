@@ -1,17 +1,28 @@
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
+import {
+  MoreHorizontalIcon,
+  Tick02Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AgentIcon } from "@/modules/agent-panel/AgentIcon";
 import {
+  invalidateAgentAvailability,
   PANEL_AGENTS,
   useInstalledAgents,
 } from "@/modules/agent-panel/lib/installedAgents";
 import { AcpPanel } from "@/modules/acp-agent";
-import { suspendAcp } from "@/modules/acp-agent/store";
-import { cn } from "@/lib/utils";
 import { PiPanel } from "@/modules/pi-agent";
 import { suspendPi } from "@/modules/pi-agent/store";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { type AgentId, setAgentPanelAgent } from "@/modules/settings/store";
-import type { WorkspaceEnv } from "@/modules/workspace";
+import { workspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 
 type Props = {
   cwd: string | null;
@@ -37,49 +48,53 @@ export function AgentPanel({ cwd, workspace }: Props) {
     const mine = active;
     return () => {
       if (mine === "pi") void suspendPi();
-      else void suspendAcp();
     };
   }, [active]);
 
   if (noneInstalled) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-card">
-        <AgentTabs
-          agents={agents}
-          active={active}
-          onSelect={setAgentPanelAgent}
-        />
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
           <p className="text-[11px] text-muted-foreground">
             No agent found on PATH
           </p>
           <p className="text-[11px] text-muted-foreground/70">
-            Install Pi, Kilo Code, or OpenCode and reopen this panel.
+            Install an ACP agent or Pi and reopen this panel.
           </p>
         </div>
       </div>
     );
   }
 
+  const selectAgent = (id: AgentId) => {
+    void setAgentPanelAgent(id);
+    invalidateAgentAvailability();
+  };
+
+  const agentPicker = (
+    <AgentPicker agents={agents} active={active} onSelect={selectAgent} />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
-      <AgentTabs
-        agents={agents}
-        active={active}
-        onSelect={setAgentPanelAgent}
-      />
       <div className="min-h-0 flex-1">
         {active === "pi" ? (
-          <PiPanel cwd={cwd} workspace={workspace} />
+          <PiPanel cwd={cwd} workspace={workspace} agentPicker={agentPicker} />
         ) : (
-          <AcpPanel agent={active} cwd={cwd} workspace={workspace} />
+          <AcpPanel
+            key={`${active}:${cwd ?? ""}:${workspaceScopeKey(workspace)}`}
+            agent={active}
+            cwd={cwd}
+            workspace={workspace}
+            agentPicker={agentPicker}
+          />
         )}
       </div>
     </div>
   );
 }
 
-function AgentTabs({
+function AgentPicker({
   agents,
   active,
   onSelect,
@@ -87,26 +102,33 @@ function AgentTabs({
   agents: { id: AgentId; label: string }[];
   active: AgentId;
   onSelect: (agent: AgentId) => void;
-}) {
+}): ReactNode {
+  const activeAgent = agents.find((agent) => agent.id === active);
+  if (!activeAgent) return null;
+
   return (
-    <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/60 px-2">
-      {agents.map((agent) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
         <button
-          key={agent.id}
           type="button"
-          onClick={() => onSelect(agent.id)}
-          aria-pressed={active === agent.id}
-          className={cn(
-            "flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] transition-colors",
-            active === agent.id
-              ? "bg-foreground/[0.08] font-medium text-foreground"
-              : "text-muted-foreground hover:bg-foreground/[0.05]",
-          )}
+          aria-label={`Change agent, currently ${activeAgent.label}`}
+          className="flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] font-semibold tracking-wide text-foreground uppercase transition-colors hover:bg-foreground/[0.06]"
         >
-          <AgentIcon agent={agent.id} size={12} />
-          {agent.label}
+          <AgentIcon agent={activeAgent.id} size={15} />
+          {activeAgent.label}
+          <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
         </button>
-      ))}
-    </div>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuLabel className="text-[10px]">Agent</DropdownMenuLabel>
+        {agents.map((agent) => (
+          <DropdownMenuItem key={agent.id} onSelect={() => onSelect(agent.id)}>
+            <AgentIcon agent={agent.id} size={14} />
+            <span className="flex-1">{agent.label}</span>
+            {agent.id === active ? <HugeiconsIcon icon={Tick02Icon} size={14} /> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
