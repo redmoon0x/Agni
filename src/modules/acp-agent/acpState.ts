@@ -13,6 +13,8 @@ import type {
   AcpMessageRole,
   AcpMode,
   AcpModeState,
+  AcpModel,
+  AcpModelState,
   AcpPlanEntry,
   AcpSessionInfo,
   AcpState,
@@ -886,6 +888,32 @@ export function parseModeState(value: unknown): AcpModeState | null {
   }
   if (!currentModeId || availableModes.length === 0) return null;
   return { currentModeId, availableModes };
+}
+
+/**
+ * ACP `SessionModelState`. Agents that expose their model catalog this way
+ * (instead of a `model` config option) still get a model picker.
+ */
+export function parseModelState(value: unknown): AcpModelState | null {
+  const object = asObject(value);
+  if (!object) return null;
+  const available = Array.isArray(object.availableModels)
+    ? object.availableModels
+    : [];
+  const availableModels: AcpModel[] = [];
+  for (const item of available) {
+    const model = asObject(item);
+    const modelId = model ? asString(model.modelId) : null;
+    const name = model ? asString(model.name) : null;
+    if (!modelId || !name) continue;
+    const description = model ? asString(model.description) : null;
+    availableModels.push({ modelId, name, description });
+  }
+  if (availableModels.length === 0) return null;
+  return {
+    currentModelId: asString(object.currentModelId),
+    availableModels,
+  };
 }
 
 export function parseAgentCapabilities(value: unknown): AcpCapabilities {

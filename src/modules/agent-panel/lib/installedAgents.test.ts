@@ -30,6 +30,7 @@ describe("orderKnownAgents", () => {
       "kilo",
       "commandcode",
       "claude",
+      "hermes",
     ]);
   });
 });

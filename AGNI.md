@@ -58,7 +58,7 @@ PTY shells are bootstrapped via injected init scripts in `src-tauri/src/modules/
 
 ### Agent detection
 
-`pty/agent_detect.rs` scans PTY output for OSC 133;C (command start) and OSC 777 markers from Claude Code hooks. Detects these agents by binary name: `claude`, `codex`, `pi`, `opencode`, `agy`, `gemini`. Emits `agni:agent-signal` events consumed by the frontend notification system. Zero cost when no agent runs.
+`pty/agent_detect.rs` scans PTY output for OSC 133;C (command start) and OSC 777 markers from Claude Code hooks. Detects these agents by binary name: `claude`, `codex`, `pi`, `opencode`, `agy`, `gemini`, `hermes`. Emits `agni:agent-signal` events consumed by the frontend notification system. Zero cost when no agent runs.
 
 ### Frontend (`src/`)
 
@@ -94,6 +94,7 @@ Every pane sits under a `ErrorBoundary` (`src/components/ErrorBoundary.tsx`) and
 - Negotiates `protocolVersion` 1 or 2 per connection and shapes payloads to the negotiated version.
 - v2 specifics: `session/prompt` acknowledges insertion (completion arrives as an idle `state_update`), tool calls are upserts with omit/`null`/value patch semantics, `plan_update` nests entries under a `planId`, agent terminals stream base64 `terminal_output_chunk` frames and `terminal_update` snapshots, diffs carry `changes[]` plus an optional git `patch`, permissions use a required `title` plus a `tool_call` or `command` `subject`.
 - v1 specifics: `clientCapabilities.session.notices` and `clientCapabilities.session.compaction` must be advertised or agents must not send `notice`, `compaction_update` or `compaction_summary_chunk`.
+- Model selection has two shapes: a `model` config option (`session/set_config_option`) or an ACP `SessionModelState` catalog (`session/set_model`). The config option wins when an agent sends both, and `session/set_model` is only sent to agents that advertised a catalog.
 - `session/fork` is a draft RFD, gated on the agent advertising `session: { fork: {} }`.
 - MCP is not supported: there is no user-facing MCP server configuration. `mcpServers` is still sent as an empty array because ACP v1 makes the field required on `session/new`, `session/load` and `session/resume`; v2 makes it optional and omits it.
 - `_meta` is read but never sent: ACP makes it optional and implementations must not assume its contents, so no extension payload is advertised.

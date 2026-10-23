@@ -25,7 +25,7 @@ export function MediaPreviewStack({ tabs, activeId }: Props) {
             )}
             aria-hidden={!visible}
           >
-            <MediaPreviewPane path={t.path} kind={t.kind} />
+            <MediaPreviewPane path={t.path} kind={t.kind} visible={visible} />
           </div>
         );
       })}

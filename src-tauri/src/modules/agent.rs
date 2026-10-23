@@ -15,6 +15,7 @@ const AGENT_PROGRAMS: &[(&str, &str)] = &[
     // Claude launches through the npx ACP adapter (see acp.rs) but is only
     // offered when the Claude Code CLI itself is on PATH.
     ("claude", "claude"),
+    ("hermes", "hermes"),
     ("pi", "pi"),
 ];
 

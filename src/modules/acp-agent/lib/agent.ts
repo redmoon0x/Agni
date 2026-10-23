@@ -25,6 +25,13 @@ export const ACP_AGENTS = {
     program: "npx",
     args: ["-y", "@zed-industries/claude-code-acp"],
   },
+  hermes: {
+    // Hermes ships its own ACP server, so it launches the CLI directly.
+    id: "hermes",
+    label: "Hermes",
+    program: "hermes",
+    args: ["acp"],
+  },
 } as const;
 
 export type AcpAgentId = keyof typeof ACP_AGENTS;

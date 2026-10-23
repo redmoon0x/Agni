@@ -40,6 +40,7 @@ fn fallback_dirs() -> Vec<PathBuf> {
     };
     push(std::env::var_os("APPDATA"), "npm");
     push(std::env::var_os("LOCALAPPDATA"), "pnpm");
+    push(std::env::var_os("LOCALAPPDATA"), "hermes\\bin");
     push(std::env::var_os("USERPROFILE"), ".bun\\bin");
     dirs
 }

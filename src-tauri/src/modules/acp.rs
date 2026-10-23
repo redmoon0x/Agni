@@ -86,6 +86,8 @@ const ACP_AGENTS: &[(&str, &str, &[&str])] = &[
     // global install is needed. Availability is probed on the `claude` CLI in
     // agent.rs, not on `npx` (which almost everyone with Node already has).
     ("claude", "npx", &["-y", "@zed-industries/claude-code-acp"]),
+    // Hermes ships its own ACP server behind `hermes acp`.
+    ("hermes", "hermes", &["acp"]),
 ];
 
 fn resolve_acp_agent(agent: &str) -> Result<(&'static str, &'static [&'static str]), String> {
@@ -499,6 +501,8 @@ fn agent_label(agent: &str) -> &'static str {
         "opencode" => "OpenCode",
         "kilo" => "Kilo",
         "commandcode" => "CommandCode",
+        "claude" => "Claude Code",
+        "hermes" => "Hermes",
         _ => "ACP agent",
     }
 }
@@ -631,6 +635,9 @@ mod tests {
         let (program, args) = resolve_acp_agent("claude").unwrap();
         assert_eq!(program, "npx");
         assert_eq!(args, ["-y", "@zed-industries/claude-code-acp"]);
+        let (program, args) = resolve_acp_agent("hermes").unwrap();
+        assert_eq!(program, "hermes");
+        assert_eq!(args, ["acp"]);
         assert!(resolve_acp_agent("nope").is_err());
     }
 

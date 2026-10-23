@@ -17,6 +17,7 @@ const DEFAULT_AGENTS: &[&str] = &[
     "open_code",
     "agy",
     "gemini",
+    "hermes",
 ];
 
 // OSC 777 marker our Claude Code hooks emit via `terminalSequence`.
@@ -361,6 +362,7 @@ mod tests {
             ("opencode", "opencode"),
             ("claude", "claude"),
             ("claudecode", "claude"),
+            ("hermes", "hermes"),
         ] {
             assert_eq!(detect(cmd).as_deref(), Some(expected));
         }

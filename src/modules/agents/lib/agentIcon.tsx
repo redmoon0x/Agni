@@ -4,6 +4,7 @@ import {
   RoboticIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { HermesLogoIcon } from "@/modules/acp-agent/HermesLogoIcon";
 
 function iconFor(agent: string): IconSvgElement {
   const a = agent.toLowerCase();
@@ -33,6 +34,9 @@ export function AgentIcon({
         style={{ width: size, height: size }}
       />
     );
+  }
+  if (agent.toLowerCase().includes("hermes")) {
+    return <HermesLogoIcon size={size} className={className} />;
   }
   return (
     <HugeiconsIcon

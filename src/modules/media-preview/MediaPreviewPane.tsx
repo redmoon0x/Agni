@@ -3,10 +3,11 @@ import { useBase64File } from "./lib/useBase64File";
 type Props = {
   path: string;
   kind: "image" | "pdf";
+  visible: boolean;
 };
 
-export function MediaPreviewPane({ path, kind }: Props) {
-  const status = useBase64File(path);
+export function MediaPreviewPane({ path, kind, visible }: Props) {
+  const status = useBase64File(path, visible);
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden rounded-md border border-border/60 bg-background">
@@ -30,6 +31,11 @@ export function MediaPreviewPane({ path, kind }: Props) {
         <div className="flex-1 overflow-auto px-6 py-4">
           {status.kind === "loading" && (
             <p className="text-[12px] text-muted-foreground">Loading...</p>
+          )}
+          {status.kind === "suspended" && (
+            <p className="text-[12px] text-muted-foreground">
+              Preview suspended
+            </p>
           )}
           {status.kind === "error" && (
             <p className="text-[12px] text-destructive">

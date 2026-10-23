@@ -11,6 +11,7 @@ import {
   parseConfigOptions,
   parseEndTurnUsage,
   parseModeState,
+  parseModelState,
   parseSessionListPage,
   reconcileAcpUserMessage,
   reduceAcpMessage,
@@ -873,6 +874,7 @@ async function spawnSession(
     sessionId?: string;
     configOptions?: unknown;
     modes?: unknown;
+    models?: unknown;
     availableCommands?: unknown;
   } | null;
   if (!created?.sessionId) {
@@ -888,6 +890,7 @@ async function spawnSession(
     commands: parseCommands(created.availableCommands),
     modeState,
     currentMode: modeState?.currentModeId ?? null,
+    modelState: parseModelState(created.models),
     protocolVersion: initialized.protocolVersion,
     agentInfo: parseAgentInfo(initialized.info ?? initialized.agentInfo),
     capabilities: selectedCapabilities,
@@ -1005,6 +1008,7 @@ async function createSession(cwd: string): Promise<void> {
     sessionId?: string;
     configOptions?: unknown;
     modes?: unknown;
+    models?: unknown;
     availableCommands?: unknown;
   } | null;
   if (!created?.sessionId) {
@@ -1017,6 +1021,7 @@ async function createSession(cwd: string): Promise<void> {
     commands: parseCommands(created.availableCommands),
     modeState,
     currentMode: modeState?.currentModeId ?? null,
+    modelState: parseModelState(created.models),
   });
 }
 
@@ -1062,6 +1067,7 @@ export async function loadAcpSession(sessionId: string): Promise<void> {
   const result = (await sendRequest(method, params).promise) as {
     configOptions?: unknown;
     modes?: unknown;
+    models?: unknown;
     availableCommands?: unknown;
   } | null;
   const modeState = parseModeState(result?.modes);
@@ -1071,6 +1077,10 @@ export async function loadAcpSession(sessionId: string): Promise<void> {
     commands: parseCommands(result?.availableCommands),
     modeState,
     currentMode: modeState?.currentModeId ?? null,
+    modelState:
+      result?.models === undefined
+        ? useAcpStore.getState().modelState
+        : parseModelState(result.models),
     permission: null,
     elicitation: null,
   });
@@ -1090,6 +1100,7 @@ export async function resumeAcpSession(sessionId: string): Promise<void> {
   const result = (await sendRequest("session/resume", params).promise) as {
     configOptions?: unknown;
     modes?: unknown;
+    models?: unknown;
     availableCommands?: unknown;
   } | null;
   useAcpStore.setState((state) => {
@@ -1106,6 +1117,10 @@ export async function resumeAcpSession(sessionId: string): Promise<void> {
         : state.commands,
       modeState,
       currentMode: modeState?.currentModeId ?? null,
+      modelState:
+        result?.models === undefined
+          ? state.modelState
+          : parseModelState(result.models),
       permission: null,
       elicitation: null,
     };
@@ -1131,6 +1146,7 @@ export async function forkAcpSession(sessionId: string): Promise<void> {
     sessionId?: string;
     configOptions?: unknown;
     modes?: unknown;
+    models?: unknown;
     availableCommands?: unknown;
   } | null;
   if (!result?.sessionId) {
@@ -1143,6 +1159,7 @@ export async function forkAcpSession(sessionId: string): Promise<void> {
     commands: parseCommands(result.availableCommands),
     modeState,
     currentMode: modeState?.currentModeId ?? null,
+    modelState: parseModelState(result.models),
     permission: null,
     elicitation: null,
   });
@@ -1245,6 +1262,32 @@ export async function setAcpMode(modeId: string): Promise<void> {
   if (!sessionId) return;
   await sendRequest("session/set_mode", { sessionId, modeId }).promise;
   useAcpStore.setState({ currentMode: modeId });
+}
+
+/**
+ * ACP `session/set_model`. Only agents that advertise a model catalog
+ * (`SessionModelState`) get this call, so an agent without it never sees a
+ * method it does not implement.
+ */
+export async function setAcpModel(modelId: string): Promise<void> {
+  const state = useAcpStore.getState();
+  const sessionId = state.sessionId;
+  if (!sessionId || !state.modelState) return;
+  const original = state.modelState.currentModelId;
+  useAcpStore.setState({
+    modelState: { ...state.modelState, currentModelId: modelId },
+  });
+  try {
+    await sendRequest("session/set_model", { sessionId, modelId }).promise;
+  } catch (error) {
+    useAcpStore.setState((current) => {
+      if (current.sessionId !== sessionId || !current.modelState) return {};
+      return {
+        modelState: { ...current.modelState, currentModelId: original },
+      };
+    });
+    throw error;
+  }
 }
 
 /** Above this size a mention is sent as a `resource_link` instead of inlining

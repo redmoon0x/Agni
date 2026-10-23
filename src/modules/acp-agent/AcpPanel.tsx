@@ -54,6 +54,7 @@ import {
   defaultElicitationValues,
   elicitationContent,
 } from "@/modules/acp-agent/elicitation";
+import { HermesLogoIcon } from "@/modules/acp-agent/HermesLogoIcon";
 import { KiloLogoIcon } from "@/modules/acp-agent/KiloLogoIcon";
 import { type AcpAgentId, acpAgent } from "@/modules/acp-agent/lib/agent";
 import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
@@ -75,6 +76,7 @@ import {
   resumeAcpSession,
   setAcpConfigOption,
   setAcpMode,
+  setAcpModel,
   stopAcp,
   useAcpStore,
 } from "@/modules/acp-agent/store";
@@ -148,6 +150,9 @@ function AgentMark({
   }
   if (agent === "claude") {
     return <ClaudeLogoIcon size={size} className={className} />;
+  }
+  if (agent === "hermes") {
+    return <HermesLogoIcon size={size} className={className} />;
   }
   return <HugeiconsIcon icon={Robot01Icon} size={size} className={className} />;
 }
@@ -1017,22 +1022,30 @@ function ModeSelect({ modeState }: { modeState: AcpModeState }) {
   );
 }
 
-function ModelPicker({ option }: { option: AcpConfigOption }) {
+function ModelPicker({
+  label,
+  options,
+  currentValue,
+  onSelect,
+}: {
+  label: string;
+  options: { value: string; name: string }[];
+  currentValue: string;
+  onSelect: (value: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const current = option.options.find(
-    (value) => value.value === option.currentValue,
-  );
+  const current = options.find((value) => value.value === currentValue);
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
   const needle = query.trim().toLowerCase();
   const filtered = needle
-    ? option.options.filter((value) =>
+    ? options.filter((value) =>
         `${value.name} ${value.value}`.toLowerCase().includes(needle),
       )
-    : option.options;
+    : options;
   return (
     <Popover
       open={open}
@@ -1044,10 +1057,10 @@ function ModelPicker({ option }: { option: AcpConfigOption }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          title={option.name}
+          title={label}
           className="max-w-40 truncate rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
         >
-          {current?.name ?? option.name}
+          {current?.name ?? label}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -1078,16 +1091,16 @@ function ModelPicker({ option }: { option: AcpConfigOption }) {
                 key={value.value}
                 type="button"
                 onClick={() => {
-                  runAcpAction(setAcpConfigOption(option.id, value.value));
+                  onSelect(value.value);
                   setOpen(false);
                 }}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent hover:text-accent-foreground",
-                  value.value === option.currentValue && "font-medium",
+                  value.value === currentValue && "font-medium",
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{value.name}</span>
-                {value.value === option.currentValue ? (
+                {value.value === currentValue ? (
                   <HugeiconsIcon
                     icon={Tick02Icon}
                     className="ml-auto shrink-0"
@@ -1455,6 +1468,7 @@ function AcpComposer({
   const capabilities = useAcpStore((state) => state.capabilities);
   const configOptions = useAcpStore((state) => state.configOptions);
   const modeState = useAcpStore((state) => state.modeState);
+  const modelState = useAcpStore((state) => state.modelState);
   const commands = useAcpStore((state) => state.commands);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -1512,6 +1526,9 @@ function AcpComposer({
       !modelConfigOptions.includes(option),
   );
   const showModeSelect = !modeOption && modeState !== null;
+  // Agents expose models either as a `model` config option or as an ACP
+  // `SessionModelState` catalog. The config option wins when both are present.
+  const showModelSelect = !modelOption && modelState !== null;
 
   const applyCommand = (name: string) => {
     setInput(`/${name} `);
@@ -1834,7 +1851,27 @@ function AcpComposer({
             </>
           ) : null}
           <span className="min-w-0 flex-1" />
-          {modelOption ? <ModelPicker option={modelOption} /> : null}
+          {modelOption ? (
+            <ModelPicker
+              label={modelOption.name}
+              options={modelOption.options}
+              currentValue={String(modelOption.currentValue)}
+              onSelect={(value) =>
+                runAcpAction(setAcpConfigOption(modelOption.id, value))
+              }
+            />
+          ) : null}
+          {showModelSelect && modelState ? (
+            <ModelPicker
+              label="Model"
+              options={modelState.availableModels.map((model) => ({
+                value: model.modelId,
+                name: model.name,
+              }))}
+              currentValue={modelState.currentModelId ?? ""}
+              onSelect={(value) => runAcpAction(setAcpModel(value))}
+            />
+          ) : null}
           {modelConfigOptions.map((option) =>
             option.type === "boolean" ? (
               <ConfigToggle key={option.id} option={option} />

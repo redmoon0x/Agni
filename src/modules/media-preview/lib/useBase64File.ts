@@ -8,13 +8,24 @@ type Base64ReadResult = { base64: string; size: number };
 type Status =
   | { kind: "loading" }
   | { kind: "ready"; dataUrl: string }
+  | { kind: "suspended" }
   | { kind: "error"; message: string };
 
-/** Reads a file as a `data:` URL for rendering binary content (images, PDFs). */
-export function useBase64File(path: string): Status {
-  const [status, setStatus] = useState<Status>({ kind: "loading" });
+const SUSPEND_AFTER_MS = 30_000;
+
+/** Reads a visible file as a `data:` URL for rendering binary content. */
+export function useBase64File(path: string, visible: boolean): Status {
+  const [status, setStatus] = useState<Status>({ kind: "suspended" });
 
   useEffect(() => {
+    if (!visible) {
+      const timer = window.setTimeout(
+        () => setStatus({ kind: "suspended" }),
+        SUSPEND_AFTER_MS,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
     let cancelled = false;
     setStatus({ kind: "loading" });
     invoke<Base64ReadResult>("fs_read_file_base64", {
@@ -34,7 +45,7 @@ export function useBase64File(path: string): Status {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, visible]);
 
   return status;
 }

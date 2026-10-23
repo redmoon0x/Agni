@@ -267,6 +267,19 @@ export type AcpModeState = {
   availableModes: AcpMode[];
 };
 
+/** ACP `ModelInfo`: the agent's own model catalog. */
+export type AcpModel = {
+  modelId: string;
+  name: string;
+  description: string | null;
+};
+
+/** ACP `SessionModelState`: the models a session can switch between. */
+export type AcpModelState = {
+  currentModelId: string | null;
+  availableModels: AcpModel[];
+};
+
 export type AcpAttachment = {
   type: "image" | "audio";
   name: string;
@@ -323,6 +336,7 @@ export type AcpState = {
   configOptions: AcpConfigOption[];
   modeState: AcpModeState | null;
   currentMode: string | null;
+  modelState: AcpModelState | null;
   agentInfo: AcpAgentInfo;
   capabilities: AcpCapabilities;
   protocolVersion: 1 | 2 | null;
@@ -359,6 +373,7 @@ export const INITIAL_ACP_STATE: AcpState = {
   configOptions: [],
   modeState: null,
   currentMode: null,
+  modelState: null,
   agentInfo: { name: null, title: null, version: null },
   capabilities: EMPTY_ACP_CAPABILITIES,
   protocolVersion: null,

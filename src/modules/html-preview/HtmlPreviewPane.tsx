@@ -24,9 +24,12 @@ type ReadResult =
 type Status =
   | { kind: "loading" }
   | { kind: "ready"; content: string }
+  | { kind: "suspended" }
   | { kind: "binary" }
   | { kind: "toolarge"; size: number; limit: number }
   | { kind: "error"; message: string };
+
+const SUSPEND_AFTER_MS = 30_000;
 
 type Props = {
   path: string;
@@ -60,7 +63,7 @@ function withBaseHref(content: string, href: string | undefined): string {
 }
 
 export function HtmlPreviewPane({ path, visible }: Props) {
-  const [status, setStatus] = useState<Status>({ kind: "loading" });
+  const [status, setStatus] = useState<Status>({ kind: "suspended" });
   const [annotating, setAnnotating] = useState(false);
   const [selection, setSelection] = useState<{
     rect: RectPx;
@@ -73,6 +76,14 @@ export function HtmlPreviewPane({ path, visible }: Props) {
   const setDraft = usePreviewAnnotateDraftStore((s) => s.setDraft);
 
   useEffect(() => {
+    if (!visible) {
+      const timer = window.setTimeout(
+        () => setStatus({ kind: "suspended" }),
+        SUSPEND_AFTER_MS,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
     let cancelled = false;
     setStatus({ kind: "loading" });
     invoke<ReadResult>("fs_read_file", {
@@ -95,7 +106,7 @@ export function HtmlPreviewPane({ path, visible }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, visible]);
 
   useEffect(() => {
     if (visible) setAnnotating(false);
@@ -230,6 +241,11 @@ export function HtmlPreviewPane({ path, visible }: Props) {
         <div className="flex-1 overflow-auto px-6 py-4">
           {status.kind === "loading" && (
             <p className="text-[12px] text-muted-foreground">Loading...</p>
+          )}
+          {status.kind === "suspended" && (
+            <p className="text-[12px] text-muted-foreground">
+              Preview suspended
+            </p>
           )}
           {status.kind === "error" && (
             <p className="text-[12px] text-destructive">

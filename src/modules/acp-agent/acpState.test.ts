@@ -8,6 +8,7 @@ import {
   parseConfigOptions,
   parseEndTurnUsage,
   parseModeState,
+  parseModelState,
   parseSessionListPage,
   reconcileAcpUserMessage,
   reduceAcpMessage,
@@ -770,6 +771,42 @@ describe("capability and config parsing", () => {
       parseModeState({ currentModeId: "ask", availableModes: [] }),
     ).toBeNull();
     expect(parseModeState(null)).toBeNull();
+  });
+
+  it("parses the session model catalog", () => {
+    const models = parseModelState({
+      currentModelId: "openrouter:sonnet",
+      availableModels: [
+        {
+          modelId: "openrouter:sonnet",
+          name: "OpenRouter - Sonnet",
+          description: "Provider: OpenRouter",
+        },
+        { modelId: "local:qwen", name: "Local - Qwen" },
+      ],
+    });
+    expect(models).toEqual({
+      currentModelId: "openrouter:sonnet",
+      availableModels: [
+        {
+          modelId: "openrouter:sonnet",
+          name: "OpenRouter - Sonnet",
+          description: "Provider: OpenRouter",
+        },
+        { modelId: "local:qwen", name: "Local - Qwen", description: null },
+      ],
+    });
+  });
+
+  it("drops malformed models and an empty catalog", () => {
+    expect(
+      parseModelState({
+        currentModelId: "m1",
+        availableModels: [{ name: "No id" }, { modelId: "m2" }],
+      }),
+    ).toBeNull();
+    expect(parseModelState({ currentModelId: "m1" })).toBeNull();
+    expect(parseModelState(null)).toBeNull();
   });
 
   it("parses v2 config options with configId and grouped values", () => {

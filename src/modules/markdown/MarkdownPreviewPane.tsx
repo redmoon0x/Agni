@@ -13,9 +13,12 @@ type ReadResult =
 type Status =
   | { kind: "loading" }
   | { kind: "ready"; content: string }
+  | { kind: "suspended" }
   | { kind: "binary" }
   | { kind: "toolarge"; size: number; limit: number }
   | { kind: "error"; message: string };
+
+const SUSPEND_AFTER_MS = 30_000;
 
 type Props = {
   path: string;
@@ -25,12 +28,23 @@ type Props = {
 const components = { code: InlineCode, pre: MarkdownCodeBlock };
 
 export function MarkdownPreviewPane({ path, visible }: Props) {
-  const [status, setStatus] = useState<Status>({ kind: "loading" });
+  const [status, setStatus] = useState<Status>({ kind: "suspended" });
 
   useEffect(() => {
+    if (!visible) {
+      const timer = window.setTimeout(
+        () => setStatus({ kind: "suspended" }),
+        SUSPEND_AFTER_MS,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
     let cancelled = false;
     setStatus({ kind: "loading" });
-    invoke<ReadResult>("fs_read_file", { path, workspace: currentWorkspaceEnv() })
+    invoke<ReadResult>("fs_read_file", {
+      path,
+      workspace: currentWorkspaceEnv(),
+    })
       .then((res) => {
         if (cancelled) return;
         if (res.kind === "text") {
@@ -44,8 +58,10 @@ export function MarkdownPreviewPane({ path, visible }: Props) {
       .catch((e) => {
         if (!cancelled) setStatus({ kind: "error", message: String(e) });
       });
-    return () => { cancelled = true; };
-  }, [path]);
+    return () => {
+      cancelled = true;
+    };
+  }, [path, visible]);
 
   return (
     <div
@@ -58,14 +74,23 @@ export function MarkdownPreviewPane({ path, visible }: Props) {
         {status.kind === "loading" && (
           <p className="text-[12px] text-muted-foreground">Loading...</p>
         )}
+        {status.kind === "suspended" && (
+          <p className="text-[12px] text-muted-foreground">Preview suspended</p>
+        )}
         {status.kind === "error" && (
-          <p className="text-[12px] text-destructive">Failed to read file: {status.message}</p>
+          <p className="text-[12px] text-destructive">
+            Failed to read file: {status.message}
+          </p>
         )}
         {status.kind === "binary" && (
-          <p className="text-[12px] text-muted-foreground">Binary file -- cannot render as markdown.</p>
+          <p className="text-[12px] text-muted-foreground">
+            Binary file -- cannot render as markdown.
+          </p>
         )}
         {status.kind === "toolarge" && (
-          <p className="text-[12px] text-muted-foreground">File is {status.size} bytes; limit {status.limit}.</p>
+          <p className="text-[12px] text-muted-foreground">
+            File is {status.size} bytes; limit {status.limit}.
+          </p>
         )}
         {status.kind === "ready" && (
           <Streamdown
