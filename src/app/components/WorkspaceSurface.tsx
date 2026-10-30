@@ -31,6 +31,7 @@ type Props = {
   onGitHistorySearchHandle: GitHistoryStackProps["onSearchHandle"];
   agentCwd: string | null;
   agentWorkspace: WorkspaceEnv;
+  onAgentOpenFile: (path: string, line?: number) => void;
 };
 
 /**
@@ -83,6 +84,7 @@ export function WorkspaceSurface({
   onGitHistorySearchHandle,
   agentCwd,
   agentWorkspace,
+  onAgentOpenFile,
 }: Props) {
   const kind = activeTab?.kind;
   const isEditorTab = kind === "editor";
@@ -160,7 +162,11 @@ export function WorkspaceSurface({
       </TabPane>
       {hasAgentTab ? (
         <TabPane visible={isAgentTab} padded={false} label="Agent" resetKey={activeId}>
-          <AgentPanel cwd={agentCwd} workspace={agentWorkspace} />
+          <AgentPanel
+            cwd={agentCwd}
+            workspace={agentWorkspace}
+            onOpenFile={onAgentOpenFile}
+          />
         </TabPane>
       ) : null}
     </div>

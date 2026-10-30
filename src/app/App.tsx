@@ -380,6 +380,17 @@ export default function App() {
     [openFileTab],
   );
 
+  const handleAgentOpenFile = useCallback(
+    (path: string, line?: number) => {
+      if (line !== undefined) {
+        handleOpenSearchResult(path, line);
+        return;
+      }
+      handleOpenFile(path, true);
+    },
+    [handleOpenFile, handleOpenSearchResult],
+  );
+
   const handlePathRenamed = useCallback(
     (from: string, to: string) => {
       for (const t of tabs) {
@@ -873,6 +884,7 @@ export default function App() {
                           onGitHistorySearchHandle={setGitHistoryHandle}
                           agentCwd={explorerRoot}
                           agentWorkspace={workspaceEnv}
+                          onAgentOpenFile={handleAgentOpenFile}
                         />
                       </ErrorBoundary>
                     </div>
@@ -935,7 +947,11 @@ export default function App() {
                 <div className="h-full min-h-0 border-l border-border/60 bg-card">
                   {rightPanelOpen && !agentTab ? (
                     <ErrorBoundary label="Agent" inline>
-                      <AgentPanel cwd={explorerRoot} workspace={workspaceEnv} />
+                      <AgentPanel
+                        cwd={explorerRoot}
+                        workspace={workspaceEnv}
+                        onOpenFile={handleAgentOpenFile}
+                      />
                     </ErrorBoundary>
                   ) : null}
                 </div>

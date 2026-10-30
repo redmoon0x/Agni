@@ -794,6 +794,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                             onFocusRow={setFocusedRowKey}
                             onStageAllEntries={scm.stageAllEntries}
                             onUnstageAllEntries={scm.unstageAllEntries}
+                            onDiscardAll={scm.requestDiscardAll}
                             onSelectEntry={scm.selectEntry}
                             onStageEntry={scm.stageEntry}
                             onUnstageEntry={scm.unstageEntry}
@@ -905,6 +906,7 @@ type RowRendererProps = {
   onFocusRow: (key: string | null) => void;
   onStageAllEntries: () => Promise<void> | void;
   onUnstageAllEntries: () => Promise<void> | void;
+  onDiscardAll: () => void;
   onSelectEntry: (entry: SourceControlEntry) => Promise<void>;
   onStageEntry: (entry: SourceControlEntry) => Promise<void>;
   onUnstageEntry: (entry: SourceControlEntry) => Promise<void>;
@@ -1079,12 +1081,14 @@ function ListHeader({
   actionBusy,
   onStageAllEntries,
   onUnstageAllEntries,
+  onDiscardAll,
 }: RowRendererProps & {
   row: Extract<RowDescriptor, { kind: "list-header" }>;
 }) {
   const isStaged = row.section === "staged";
   const toggleLabel = isStaged ? "Unstage all changes" : "Stage all changes";
   const checkboxId = `scm-toggle-all-${row.section}`;
+  const discardAllBusy = actionBusy === "discard:all";
 
   return (
     <div className="flex h-7 items-center gap-2 px-3">
@@ -1094,22 +1098,42 @@ function ListHeader({
       <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-border/60 px-1 text-[9.5px] font-semibold tabular-nums text-muted-foreground">
         {row.count}
       </span>
-      <label
-        htmlFor={checkboxId}
-        className="ml-auto flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[10.5px] font-medium text-muted-foreground hover:text-foreground"
-      >
-        <span>All</span>
-        <Checkbox
-          id={checkboxId}
-          aria-label={toggleLabel}
-          checked={isStaged}
-          disabled={actionBusy !== null}
-          onCheckedChange={() =>
-            void (isStaged ? onUnstageAllEntries() : onStageAllEntries())
-          }
-          className="size-3.5"
-        />
-      </label>
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {!isStaged ? (
+          <IconActionButton
+            label={discardAllBusy ? "Discarding…" : "Discard all changes"}
+            disabled={actionBusy !== null}
+            side="bottom"
+            onClick={onDiscardAll}
+          >
+            {discardAllBusy ? (
+              <Spinner className="size-3" />
+            ) : (
+              <HugeiconsIcon
+                icon={RemoveSquareIcon}
+                size={11}
+                strokeWidth={1.9}
+              />
+            )}
+          </IconActionButton>
+        ) : null}
+        <label
+          htmlFor={checkboxId}
+          className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[10.5px] font-medium text-muted-foreground hover:text-foreground"
+        >
+          <span>All</span>
+          <Checkbox
+            id={checkboxId}
+            aria-label={toggleLabel}
+            checked={isStaged}
+            disabled={actionBusy !== null}
+            onCheckedChange={() =>
+              void (isStaged ? onUnstageAllEntries() : onStageAllEntries())
+            }
+            className="size-3.5"
+          />
+        </label>
+      </div>
     </div>
   );
 }

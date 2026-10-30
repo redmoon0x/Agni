@@ -1,7 +1,7 @@
 import {
   Add01Icon,
   ArrowDown01Icon,
-  ArrowUp02Icon,
+  AttachmentIcon,
   Clock01Icon,
   FileEditIcon,
   Loading03Icon,
@@ -9,7 +9,6 @@ import {
   PowerIcon,
   RefreshIcon,
   Robot01Icon,
-  Square01Icon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -23,8 +22,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
-import { useStickToBottom } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -98,14 +95,34 @@ import {
   formatCount,
   formatTokens,
 } from "@/modules/agent-panel/lib/usage";
+import { AgentCard, AgentError } from "@/modules/agent-ui/Card";
+import {
+  AgentAttachmentChip,
+  AgentAttachmentRow,
+  AgentComposerFrame,
+  AgentComposerIconButton,
+  AgentComposerSendButton,
+  AgentComposerTextarea,
+  AgentSuggestionItem,
+  AgentSuggestions,
+} from "@/modules/agent-ui/Composer";
+import { AgentConversation } from "@/modules/agent-ui/Conversation";
+import { AgentEmptyState } from "@/modules/agent-ui/EmptyState";
+import {
+  AgentHeader,
+  AgentIconButton,
+  type AgentRunStatus,
+  type AgentSubtitleTone,
+} from "@/modules/agent-ui/Header";
+import { baseName, displayPath } from "@/modules/agent-ui/lib/path";
+import { AgentAssistantMessage, AgentUserMessage } from "@/modules/agent-ui/Messages";
+import { AgentThinking } from "@/modules/agent-ui/Thinking";
+import { AgentToolRow, type AgentToolStatus } from "@/modules/agent-ui/ToolRow";
 import {
   type CommandPaletteFileHit,
   useWorkspaceFileSearch,
 } from "@/modules/command-palette/useWorkspaceFileSearch";
-import {
-  InlineCode,
-  MarkdownCodeBlock,
-} from "@/modules/markdown/MarkdownCodeBlock";
+import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setAcpAdditionalDirectories } from "@/modules/settings/store";
 import { type WorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
@@ -115,12 +132,12 @@ type Props = {
   cwd: string | null;
   workspace: WorkspaceEnv;
   agentPicker?: ReactNode;
+  onOpenFile?: (path: string, line?: number) => void;
 };
 
 type AtToken = { query: string; start: number };
 type MentionEntry = { rel: string; path: string };
 
-const markdownComponents = { code: InlineCode, pre: MarkdownCodeBlock };
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
 
@@ -216,7 +233,8 @@ function DiffChangeList({ changes }: { changes: AcpDiffChange[] }) {
             className={cn(
               "shrink-0 uppercase",
               change.operation === "delete" && "text-destructive",
-              change.operation === "add" && "text-emerald-500",
+              change.operation === "add" &&
+                "text-[var(--terminal-ansi-green)]",
               (change.operation === "modify" ||
                 change.operation === "move" ||
                 change.operation === "copy") && "text-primary",
@@ -244,7 +262,15 @@ function DiffChangeList({ changes }: { changes: AcpDiffChange[] }) {
   );
 }
 
-function ToolContentItem({ content }: { content: AcpToolContent }) {
+function ToolContentItem({
+  content,
+  cwd,
+  onOpenPath,
+}: {
+  content: AcpToolContent;
+  cwd?: string | null;
+  onOpenPath?: (path: string) => void;
+}) {
   if (content.type === "diff") {
     // v2 reports `changes` plus an optional git patch; there is no
     // old/new text pair, so the patch (or the change list) carries the render.
@@ -254,7 +280,20 @@ function ToolContentItem({ content }: { content: AcpToolContent }) {
     return (
       <div className="border-t border-border/40">
         <div className="px-2.5 pt-1.5 font-mono text-[10px] text-muted-foreground">
-          {content.path}
+          {onOpenPath ? (
+            <button
+              type="button"
+              onClick={() => onOpenPath(content.path)}
+              title={content.path}
+              className="max-w-full truncate text-left hover:text-foreground hover:underline"
+            >
+              {displayPath(content.path, cwd ?? null)}
+            </button>
+          ) : (
+            <span className="block truncate" title={content.path}>
+              {displayPath(content.path, cwd ?? null)}
+            </span>
+          )}
         </div>
         <DiffChangeList changes={content.changes} />
         {binary ? (
@@ -401,111 +440,75 @@ function ContentBlockView({
   return null;
 }
 
-function ToolRow({ tool }: { tool: AcpToolCall }) {
-  const [open, setOpen] = useState(false);
-  const detail = tool.content.length > 0;
+const ACP_TOOL_STATUS: Record<AcpToolCall["status"], AgentToolStatus> = {
+  pending: "pending",
+  in_progress: "running",
+  completed: "success",
+  failed: "error",
+  cancelled: "cancelled",
+};
+
+function ToolRow({
+  tool,
+  cwd,
+  onOpenPath,
+}: {
+  tool: AcpToolCall;
+  cwd: string | null;
+  onOpenPath?: (path: string, line?: number) => void;
+}) {
+  const location = tool.locations[0];
   return (
-    <div className="rounded-lg border border-border/50 bg-foreground/[0.025]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
-        onClick={() => detail && setOpen((value) => !value)}
-        aria-expanded={open}
-      >
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            tool.status === "in_progress" && "animate-pulse bg-primary",
-            tool.status === "pending" && "bg-muted-foreground/50",
-            tool.status === "completed" && "bg-emerald-500",
-            tool.status === "failed" && "bg-destructive",
-            tool.status === "cancelled" && "bg-muted-foreground/40",
-          )}
-        />
-        <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
-          {tool.title || tool.kind}
-        </span>
-        {tool.name ? (
-          <span
-            className="max-w-32 shrink-0 truncate font-mono text-[9px] text-muted-foreground/70"
-            title={tool.name}
-          >
-            {tool.name}
-          </span>
-        ) : null}
-        <span className="shrink-0 text-[9px] tracking-wide text-muted-foreground uppercase">
-          {tool.kind}
-        </span>
-        {detail ? (
-          <HugeiconsIcon
-            icon={ArrowDown01Icon}
-            size={12}
-            className={cn(
-              "shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-180",
-            )}
-          />
-        ) : null}
-      </button>
-      {open
-        ? tool.content.map((content) => (
-            <ToolContentItem key={contentKey(content)} content={content} />
-          ))
-        : null}
-    </div>
+    <AgentToolRow
+      title={tool.title || tool.name || tool.kind}
+      subtitle={location ? displayPath(location.path, cwd) : null}
+      kind={tool.kind}
+      status={ACP_TOOL_STATUS[tool.status] ?? "pending"}
+      meta={tool.name}
+      path={location?.path}
+      line={location?.line}
+      onOpenPath={onOpenPath}
+      detail={
+        tool.content.length > 0 ? (
+          <div>
+            {tool.content.map((content) => (
+              <ToolContentItem
+                key={contentKey(content)}
+                content={content}
+                cwd={cwd}
+                onOpenPath={
+                  onOpenPath ? (path) => onOpenPath(path) : undefined
+                }
+              />
+            ))}
+          </div>
+        ) : null
+      }
+    />
   );
 }
 
 function Message({ message }: { message: AcpMessage }) {
+  const extras = message.content
+    .filter((content) => content.type !== "text")
+    .map((content, index) => (
+      <ContentBlockView key={`${content.type}-${index}`} content={content} />
+    ));
+
   if (message.role === "thought") {
     return (
-      <div className="rounded-lg border border-border/40 bg-foreground/[0.015] px-2.5 py-2">
-        <div className="mb-1 text-[9px] tracking-wide text-muted-foreground uppercase">
-          Thinking
-        </div>
-        <div className="select-text text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-          {message.text}
-        </div>
-        {message.content
-          .filter((content) => content.type !== "text")
-          .map((content, index) => (
-            <ContentBlockView
-              key={`${content.type}-${index}`}
-              content={content}
-            />
-          ))}
-      </div>
+      <AgentThinking text={message.text}>
+        {extras.length > 0 ? (
+          <div className="mt-2 space-y-1">{extras}</div>
+        ) : null}
+      </AgentThinking>
     );
   }
   if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="select-text max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap">
-          {message.text}
-          {message.content
-            .filter((content) => content.type !== "text")
-            .map((content, index) => (
-              <ContentBlockView
-                key={`${content.type}-${index}`}
-                content={content}
-              />
-            ))}
-        </div>
-      </div>
-    );
+    return <AgentUserMessage text={message.text}>{extras}</AgentUserMessage>;
   }
   return (
-    <div className="select-text text-[12px] leading-relaxed">
-      <Streamdown components={markdownComponents}>{message.text}</Streamdown>
-      {message.content
-        .filter((content) => content.type !== "text")
-        .map((content, index) => (
-          <ContentBlockView
-            key={`${content.type}-${index}`}
-            content={content}
-          />
-        ))}
-    </div>
+    <AgentAssistantMessage text={message.text}>{extras}</AgentAssistantMessage>
   );
 }
 
@@ -549,6 +552,12 @@ function PlanList() {
           )}
         />
       </button>
+      <div className="mx-2.5 h-0.5 overflow-hidden rounded-full bg-foreground/[0.05]">
+        <div
+          className="h-full rounded-full bg-primary/70 transition-[width]"
+          style={{ width: `${Math.round((done / plan.length) * 100)}%` }}
+        />
+      </div>
       {open ? (
         <div className="space-y-1 px-2.5 pb-2">
           {plan.map((entry) => (
@@ -556,10 +565,10 @@ function PlanList() {
               <span
                 className={cn(
                   "mt-1 size-1.5 shrink-0 rounded-full",
-                  entry.status === "completed" && "bg-emerald-500",
+                  entry.status === "completed" && "bg-muted-foreground/40",
                   entry.status === "in_progress" && "animate-pulse bg-primary",
                   (!entry.status || entry.status === "pending") &&
-                    "bg-muted-foreground/50",
+                    "border border-muted-foreground/40",
                 )}
               />
               <span
@@ -617,15 +626,12 @@ function PermissionPrompt() {
   const permission = useAcpStore((state) => state.permission);
   if (!permission) return null;
   return (
-    <div className="mx-2 mb-2 rounded-lg border border-border/60 bg-foreground/[0.02] p-2.5">
-      <div className="mb-2 text-[11px] font-medium">
-        {permission.title ?? "The agent wants to run a tool"}
-      </div>
-      {permission.description ? (
-        <p className="mb-2 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-          {permission.description}
-        </p>
-      ) : null}
+    <AgentCard
+      eyebrow="Permission"
+      title={permission.title ?? "The agent wants to run a tool"}
+      description={permission.description}
+      tone="primary"
+    >
       {permission.subject ? (
         <div className="mb-2">
           <PermissionSubjectDetail subject={permission.subject} />
@@ -648,7 +654,7 @@ function PermissionPrompt() {
           </button>
         ))}
       </div>
-    </div>
+    </AgentCard>
   );
 }
 
@@ -671,14 +677,13 @@ function ElicitationForm({
   };
 
   return (
-    <div className="mx-2 mb-2 rounded-lg border border-primary/30 bg-primary/[0.04] p-2.5">
-      <div className="text-[11px] font-medium">
-        {elicitation.title ?? "The agent needs information"}
-      </div>
-      <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-        {elicitation.message}
-      </p>
-      <div className="mt-3 space-y-2.5">
+    <AgentCard
+      eyebrow="Input required"
+      title={elicitation.title ?? "The agent needs information"}
+      description={elicitation.message}
+      tone="primary"
+    >
+      <div className="space-y-2.5">
         {elicitation.fields.map((field) => {
           const id = `elicitation-${String(elicitation.id)}-${field.name}`;
           const value = values[field.name];
@@ -824,7 +829,7 @@ function ElicitationForm({
           Cancel
         </button>
       </div>
-    </div>
+    </AgentCard>
   );
 }
 
@@ -852,12 +857,12 @@ function OpaqueElicitation({
   elicitation: Extract<AcpElicitationRequest, { mode: "other" }>;
 }) {
   return (
-    <div className="mx-2 mb-2 rounded-lg border border-border/60 bg-foreground/[0.02] p-2.5">
-      <div className="text-[11px] font-medium">Unsupported request</div>
-      <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-        {elicitation.message}
-      </p>
-      <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">
+    <AgentCard
+      eyebrow="Input requested"
+      title="Unsupported request"
+      description={elicitation.message}
+    >
+      <p className="font-mono text-[10px] text-muted-foreground">
         mode: {elicitation.rawMode || "(unspecified)"}
       </p>
       <button
@@ -867,7 +872,7 @@ function OpaqueElicitation({
       >
         Decline
       </button>
-    </div>
+    </AgentCard>
   );
 }
 
@@ -889,14 +894,13 @@ function UrlElicitation({
     respondToElicitation(action);
   };
   return (
-    <div className="mx-2 mb-2 rounded-lg border border-primary/30 bg-primary/[0.04] p-2.5">
-      <div className="text-[11px] font-medium">
-        {elicitation.title ?? "The agent wants to open a link"}
-      </div>
-      <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-        {elicitation.message}
-      </p>
-      <div className="mt-2 rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+    <AgentCard
+      eyebrow="Open link"
+      title={elicitation.title ?? "The agent wants to open a link"}
+      description={elicitation.message}
+      tone="primary"
+    >
+      <div className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
         <div className="text-[10px] text-muted-foreground">
           Opens in your browser:{" "}
           <span className="font-medium text-foreground">{host}</span>
@@ -928,7 +932,7 @@ function UrlElicitation({
           Cancel
         </button>
       </div>
-    </div>
+    </AgentCard>
   );
 }
 
@@ -1480,6 +1484,15 @@ function AcpComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  // Pick up an annotation draft (preview → agent) staged for this agent.
+  useEffect(() => {
+    const draft = usePreviewAnnotateDraftStore.getState().consumeFor(agent);
+    if (draft) {
+      setInput(draft);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [agent]);
+
   const canMention = capabilities.promptEmbeddedContext;
   const canAttach = capabilities.promptImage || capabilities.promptAudio;
   const attachmentAccept = [
@@ -1711,94 +1724,85 @@ function AcpComposer({
   const placeholder = `Ask ${acpAgent(agent).label} to work on something${
     canMention ? "... (@ to reference a file)" : "..."
   }`;
+  const attachmentLabel =
+    capabilities.promptImage && capabilities.promptAudio
+      ? "Attach an image or audio clip"
+      : capabilities.promptImage
+        ? "Choose or paste an image"
+        : "Attach an audio clip";
+  const suggestions =
+    atToken && fileHits.length > 0 ? (
+      <AgentSuggestions className="max-h-56 overflow-y-auto">
+        {fileHits.map((hit, index) => (
+          <AgentSuggestionItem
+            key={hit.path}
+            active={index === safeAtHighlight}
+            onClick={() => applyMention(hit)}
+          >
+            <HugeiconsIcon
+              icon={FileEditIcon}
+              size={12}
+              strokeWidth={1.75}
+              className="shrink-0 text-muted-foreground"
+            />
+            <span className="min-w-0 flex-1 truncate">{hit.name}</span>
+            <span className="min-w-0 max-w-40 shrink-0 truncate text-[10px] text-muted-foreground">
+              {hit.rel}
+            </span>
+          </AgentSuggestionItem>
+        ))}
+      </AgentSuggestions>
+    ) : commandSuggestions.length > 0 ? (
+      <AgentSuggestions>
+        {commandSuggestions.map((command, index) => (
+          <AgentSuggestionItem
+            key={command.name}
+            active={index === highlightIndex}
+            onClick={() => applyCommand(command.name)}
+          >
+            <span className="font-medium">/{command.name}</span>
+            {command.description ? (
+              <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+                {command.description}
+              </span>
+            ) : null}
+          </AgentSuggestionItem>
+        ))}
+      </AgentSuggestions>
+    ) : undefined;
+  const attachmentRow =
+    attachments.length > 0 ? (
+      <AgentAttachmentRow>
+        {attachments.map((attachment) => (
+          <AgentAttachmentChip
+            key={`${attachment.name}-${attachment.data.length}`}
+            name={attachment.name}
+            badge={attachment.type === "audio" ? "audio" : undefined}
+            preview={
+              attachment.type === "image" ? (
+                <img
+                  src={`data:${attachment.mimeType};base64,${attachment.data}`}
+                  alt=""
+                  className="size-4 rounded-sm object-cover"
+                />
+              ) : undefined
+            }
+            onRemove={() =>
+              setAttachments((current) =>
+                current.filter((candidate) => candidate !== attachment),
+              )
+            }
+          />
+        ))}
+      </AgentAttachmentRow>
+    ) : undefined;
 
   return (
-    <div className="relative shrink-0 p-2">
-      {atToken && fileHits.length > 0 ? (
-        <div className="absolute inset-x-2 bottom-full z-10 mb-1 max-h-56 overflow-y-auto rounded-xl border border-border/80 bg-popover shadow-lg ring-1 ring-foreground/5">
-          {fileHits.map((hit, index) => (
-            <button
-              key={hit.path}
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => applyMention(hit)}
-              className={cn(
-                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px]",
-                index === safeAtHighlight
-                  ? "bg-accent text-accent-foreground"
-                  : "text-foreground",
-              )}
-            >
-              <HugeiconsIcon
-                icon={FileEditIcon}
-                size={12}
-                strokeWidth={1.75}
-                className="shrink-0 text-muted-foreground"
-              />
-              <span className="min-w-0 flex-1 truncate">{hit.name}</span>
-              <span className="min-w-0 max-w-40 shrink-0 truncate text-[10px] text-muted-foreground">
-                {hit.rel}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : commandSuggestions.length > 0 ? (
-        <div className="absolute inset-x-2 bottom-full z-10 mb-1 overflow-hidden rounded-xl border border-border/80 bg-popover shadow-lg ring-1 ring-foreground/5">
-          {commandSuggestions.map((command, index) => (
-            <button
-              key={command.name}
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => applyCommand(command.name)}
-              className={cn(
-                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px]",
-                index === highlightIndex
-                  ? "bg-accent text-accent-foreground"
-                  : "text-foreground",
-              )}
-            >
-              <span className="font-medium">/{command.name}</span>
-              {command.description ? (
-                <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
-                  {command.description}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <div className="rounded-xl border border-border/80 bg-background shadow-sm focus-within:border-ring/70">
-        {attachments.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5 px-3 pt-2">
-            {attachments.map((attachment) => (
-              <button
-                key={`${attachment.name}-${attachment.data.length}`}
-                type="button"
-                title={`Remove ${attachment.name}`}
-                onClick={() =>
-                  setAttachments((current) =>
-                    current.filter((candidate) => candidate !== attachment),
-                  )
-                }
-                className="flex max-w-36 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.1] hover:text-foreground"
-              >
-                {attachment.type === "image" ? (
-                  <img
-                    src={`data:${attachment.mimeType};base64,${attachment.data}`}
-                    alt=""
-                    className="size-4 rounded-sm object-cover"
-                  />
-                ) : (
-                  <span className="rounded-sm bg-foreground/[0.08] px-1 text-[9px] uppercase">
-                    audio
-                  </span>
-                )}
-                <span className="truncate">{attachment.name}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <textarea
+    <AgentComposerFrame
+      suggestions={suggestions}
+      attachments={attachmentRow}
+      input={
+        <AgentComposerTextarea
           ref={textareaRef}
           value={input}
           onChange={(event) => {
@@ -1818,11 +1822,11 @@ function AcpComposer({
           onKeyDown={handleKeyDown}
           onPaste={canAttach ? handleImagePaste : undefined}
           placeholder={placeholder}
-          rows={3}
           disabled={connection !== "ready"}
-          className="block max-h-40 min-h-16 w-full resize-none bg-transparent px-3 pt-3 text-[12px] leading-relaxed outline-none placeholder:text-muted-foreground/70 disabled:opacity-50"
         />
-        <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
+      }
+      toolbar={
+        <>
           {canAttach ? (
             <>
               <input
@@ -1833,21 +1837,17 @@ function AcpComposer({
                 className="sr-only"
                 onChange={(event) => void addAttachments(event.target.files)}
               />
-              <button
-                type="button"
-                title={
-                  capabilities.promptImage && capabilities.promptAudio
-                    ? "Attach an image or audio clip"
-                    : capabilities.promptImage
-                      ? "Choose or paste an image"
-                      : "Attach an audio clip"
-                }
+              <AgentComposerIconButton
+                label={attachmentLabel}
                 disabled={attachments.length >= MAX_ATTACHMENTS}
                 onClick={() => imageInputRef.current?.click()}
-                className="rounded-md px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-50"
               >
-                Attach
-              </button>
+                <HugeiconsIcon
+                  icon={AttachmentIcon}
+                  size={14}
+                  strokeWidth={1.8}
+                />
+              </AgentComposerIconButton>
             </>
           ) : null}
           <span className="min-w-0 flex-1" />
@@ -1891,29 +1891,27 @@ function AcpComposer({
               <ConfigSelect key={option.id} option={option} />
             ),
           )}
-          <button
-            type="button"
-            aria-label={isStreaming ? "Stop the agent" : "Send"}
+          <AgentComposerSendButton
+            streaming={isStreaming}
             disabled={
               connection !== "ready" ||
               (!isStreaming && !input.trim() && attachments.length === 0)
             }
             onClick={() => (isStreaming ? cancelAcp() : void submit())}
-            className="ml-0.5 flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-35"
-          >
-            <HugeiconsIcon
-              icon={isStreaming ? Square01Icon : ArrowUp02Icon}
-              size={14}
-              strokeWidth={2.2}
-            />
-          </button>
-        </div>
-      </div>
-    </div>
+          />
+        </>
+      }
+    />
   );
 }
 
-export function AcpPanel({ agent, cwd, workspace, agentPicker }: Props) {
+export function AcpPanel({
+  agent,
+  cwd,
+  workspace,
+  agentPicker,
+  onOpenFile,
+}: Props) {
   const state = useAcpStore();
   const descriptor = acpAgent(agent);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
@@ -1921,10 +1919,6 @@ export function AcpPanel({ agent, cwd, workspace, agentPicker }: Props) {
   const extraFolderCount = usePreferencesStore(
     (s) => s.acpAdditionalDirectories.length,
   );
-  const { scrollRef, contentRef } = useStickToBottom({
-    initial: "instant",
-    resize: "instant",
-  });
 
   useEffect(() => {
     void ensureAcpStarted(agent, cwd, workspace).catch(() => {});
@@ -1962,10 +1956,9 @@ export function AcpPanel({ agent, cwd, workspace, agentPicker }: Props) {
     workspaceScopeKey(state.sessionConfig.workspace) ===
       workspaceScopeKey(workspace);
   const switching = state.connection === "starting" || !configMatches;
-  const cwdLabel = cwd
-    ? (cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd)
-    : null;
-  const agentLabel = state.agentInfo.title ?? state.agentInfo.name;
+  const cwdLabel = cwd ? baseName(cwd) : null;
+  const agentLabel =
+    state.agentInfo.title ?? state.agentInfo.name ?? descriptor.label;
   const usageCost = formatCost(
     state.usage?.cost?.amount,
     state.usage?.cost?.currency,
@@ -1977,195 +1970,178 @@ export function AcpPanel({ agent, cwd, workspace, agentPicker }: Props) {
           : `${formatCount(state.usage.used)} tokens`
       }${usageCost ? ` · ${usageCost}` : ""}`
     : null;
+  const meta = [cwdLabel, usageText].filter(Boolean).join(" · ") || null;
+
+  const runStatus: AgentRunStatus =
+    state.connection === "stopped"
+      ? "stopped"
+      : unavailable
+        ? "error"
+        : switching
+          ? "starting"
+          : state.sessionState === "requires_action"
+            ? "waiting"
+            : state.isStreaming
+              ? "working"
+              : "ready";
+
+  let subtitle = state.sessionTitle ?? agentLabel;
+  let subtitleTone: AgentSubtitleTone = "default";
+  if (switching) {
+    subtitle = `Starting ${descriptor.label}`;
+  } else if (state.sessionState === "requires_action") {
+    subtitle = "Waiting for your input";
+    subtitleTone = "primary";
+  } else if (state.isStreaming) {
+    subtitle = state.sessionTitle ?? "Working";
+  } else if (state.notice) {
+    subtitle =
+      state.notice.severity && state.notice.severity !== "info"
+        ? `${state.notice.severity}: ${state.notice.text}`
+        : state.notice.text;
+    subtitleTone =
+      state.notice.kind === "auth"
+        ? "primary"
+        : state.notice.severity === "error"
+          ? "destructive"
+          : state.notice.severity === "warning"
+            ? "warning"
+            : "default";
+  } else if (state.lastStopReason === "error" && state.lastStopError) {
+    subtitle = state.lastStopError;
+    subtitleTone = "destructive";
+  } else if (!state.sessionTitle && state.connection === "ready") {
+    subtitle = "Ready";
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        {agentPicker ?? (
+      <AgentHeader
+        picker={agentPicker}
+        mark={<AgentMark agent={agent} size={14} />}
+        label={descriptor.label}
+        status={runStatus}
+        subtitle={subtitle}
+        subtitleTone={subtitleTone}
+        meta={meta}
+        actions={
           <>
-            <AgentMark agent={agent} size={16} />
-            <span className="text-[11px] font-semibold tracking-wide uppercase">
-              {descriptor.label}
-            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <AgentIconButton label="Agent session menu">
+                  <HugeiconsIcon icon={MoreHorizontalIcon} size={15} />
+                </AgentIconButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onSelect={() => runAcpAction(newAcpSession())}>
+                  <HugeiconsIcon icon={Add01Icon} />
+                  New session
+                </DropdownMenuItem>
+                {state.capabilities.sessionList ? (
+                  <DropdownMenuItem
+                    onSelect={() => setSessionSwitcherOpen(true)}
+                  >
+                    <HugeiconsIcon icon={Clock01Icon} />
+                    Switch session
+                  </DropdownMenuItem>
+                ) : null}
+                {state.authMethods.map((method) => (
+                  <DropdownMenuItem
+                    key={method.methodId}
+                    onSelect={() => runAcpAction(loginAcp(method.methodId))}
+                  >
+                    Sign in: {method.name}
+                  </DropdownMenuItem>
+                ))}
+                {(state.protocolVersion === 2 ||
+                  state.capabilities.authLogout) &&
+                state.authMethods.length > 0 ? (
+                  <DropdownMenuItem onSelect={() => runAcpAction(logoutAcp())}>
+                    Sign out
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem onSelect={() => setExtraFoldersOpen(true)}>
+                  Extra folders
+                  {extraFolderCount > 0 ? ` (${extraFolderCount})` : ""}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => runAcpAction(restartAcp())}>
+                  <HugeiconsIcon icon={RefreshIcon} />
+                  Restart
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => runAcpAction(stopAcp())}>
+                  <HugeiconsIcon icon={PowerIcon} />
+                  Stop
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </>
-        )}
-        <span
-          className={cn(
-            "ml-0.5 size-1.5 rounded-full",
-            state.connection === "ready" &&
-              !state.isStreaming &&
-              "bg-emerald-500",
-            state.isStreaming && "animate-pulse bg-primary",
-            state.connection === "starting" &&
-              "animate-pulse bg-muted-foreground",
-            unavailable && "bg-destructive",
-            state.connection === "idle" && "bg-muted-foreground/50",
-          )}
-        />
-        {cwdLabel ? (
-          <span
-            className="min-w-0 max-w-28 shrink-0 truncate text-[10px] text-muted-foreground/70"
-            title={cwd ?? undefined}
+        }
+      />
+
+      <AgentConversation>
+        {switching ? (
+          <div className="flex flex-1 items-center justify-center gap-2 text-[11px] text-muted-foreground">
+            <HugeiconsIcon
+              icon={Loading03Icon}
+              size={14}
+              className="animate-spin"
+            />
+            Starting {descriptor.label}
+          </div>
+        ) : unavailable ? (
+          <AgentEmptyState
+            mark={<AgentMark agent={agent} size={24} />}
+            title={
+              state.connection === "stopped"
+                ? `${descriptor.label} stopped`
+                : `${descriptor.label} is unavailable`
+            }
+            hint={
+              state.connection === "stopped"
+                ? "You stopped the agent process."
+                : (state.processError ?? "The agent process has exited.")
+            }
           >
-            {cwdLabel}
-          </span>
-        ) : null}
-        {/* Live lifecycle state outranks the last-known usage figure. */}
-          {state.sessionState === "requires_action" ? (
-            <span className="min-w-0 flex-1 truncate text-[10px] text-primary">
-              Waiting on you
-            </span>
-          ) : state.isStreaming ? (
-            <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
-              Working
-            </span>
-          ) : state.notice ? (
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-[10px]",
-              state.notice.kind === "auth"
-                ? "text-primary"
-                : state.notice.severity === "error"
-                  ? "text-destructive"
-                  : state.notice.severity === "warning"
-                    ? "text-amber-500"
-                    : "text-muted-foreground",
-            )}
-          >
-            {state.notice.severity && state.notice.severity !== "info"
-              ? `${state.notice.severity}: ${state.notice.text}`
-              : state.notice.text}
-          </span>
-        ) : state.lastStopReason === "error" && state.lastStopError ? (
-          <span
-            className="min-w-0 flex-1 truncate text-[10px] text-destructive"
-            title={state.lastStopError}
-          >
-            {state.lastStopError}
-          </span>
-        ) : (
-          <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
-            {usageText ??
-              (state.sessionTitle ??
-                agentLabel ??
-                (state.connection === "ready" ? "Ready" : state.connection))}
-          </span>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="Agent session menu"
-              className="rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground"
+              onClick={() => runAcpAction(restartAcp())}
+              className="mt-3 rounded-md border border-border px-3 py-1.5 text-[11px] transition-colors hover:bg-foreground/[0.05]"
             >
-              <HugeiconsIcon icon={MoreHorizontalIcon} size={15} />
+              {state.connection === "stopped"
+                ? `Start ${descriptor.label}`
+                : "Try again"}
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onSelect={() => runAcpAction(newAcpSession())}>
-              <HugeiconsIcon icon={Add01Icon} />
-              New session
-            </DropdownMenuItem>
-            {state.capabilities.sessionList ? (
-              <DropdownMenuItem onSelect={() => setSessionSwitcherOpen(true)}>
-                <HugeiconsIcon icon={Clock01Icon} />
-                Switch session
-              </DropdownMenuItem>
-            ) : null}
-            {state.authMethods.map((method) => (
-              <DropdownMenuItem
-                key={method.methodId}
-                onSelect={() => runAcpAction(loginAcp(method.methodId))}
-              >
-                Sign in: {method.name}
-              </DropdownMenuItem>
-            ))}
-            {(state.protocolVersion === 2 || state.capabilities.authLogout) &&
-            state.authMethods.length > 0 ? (
-              <DropdownMenuItem onSelect={() => runAcpAction(logoutAcp())}>
-                Sign out
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem onSelect={() => setExtraFoldersOpen(true)}>
-              Extra folders
-              {extraFolderCount > 0 ? ` (${extraFolderCount})` : ""}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => runAcpAction(restartAcp())}>
-              <HugeiconsIcon icon={RefreshIcon} />
-              Restart
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => runAcpAction(stopAcp())}>
-              <HugeiconsIcon icon={PowerIcon} />
-              Stop
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        <div ref={contentRef} className="min-h-full">
-          {switching ? (
-            <div className="flex h-full items-center justify-center gap-2 text-[11px] text-muted-foreground">
-              <HugeiconsIcon
-                icon={Loading03Icon}
-                size={14}
-                className="animate-spin"
-              />
-              Starting {descriptor.label}
-            </div>
-          ) : unavailable ? (
-            <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-              <div className="mb-3 flex size-9 items-center justify-center rounded-xl bg-foreground/[0.05]">
-                <AgentMark agent={agent} size={18} />
-              </div>
-              <p className="text-[12px] font-medium">
-                {state.connection === "stopped"
-                  ? `${descriptor.label} stopped`
-                  : `${descriptor.label} is unavailable`}
-              </p>
-              <p className="mt-1.5 max-w-64 text-[10px] leading-relaxed text-muted-foreground">
-                {state.connection === "stopped"
-                  ? "You stopped the agent process."
-                  : (state.processError ?? "The agent process has exited.")}
-              </p>
-              <button
-                type="button"
-                onClick={() => runAcpAction(restartAcp())}
-                className="mt-3 rounded-md border border-border px-3 py-1.5 text-[11px] hover:bg-foreground/[0.05]"
-              >
-                {state.connection === "stopped"
-                  ? `Start ${descriptor.label}`
-                  : "Try again"}
-              </button>
-            </div>
-          ) : empty ? (
-            <div className="flex h-full flex-col items-center justify-center px-5 text-center">
-              <div className="flex size-20 items-center justify-center rounded-3xl bg-foreground/[0.05]">
-                <AgentMark agent={agent} size={44} />
-              </div>
-              <p className="mt-4 text-[12px] font-medium text-muted-foreground">
-                Ask {descriptor.label} to work on something
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {items.map((item) =>
-                item.kind === "message" ? (
-                  <Message key={item.message.id} message={item.message} />
-                ) : (
-                  <ToolRow key={item.tool.id} tool={item.tool} />
-                ),
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+          </AgentEmptyState>
+        ) : empty ? (
+          <AgentEmptyState
+            mark={<AgentMark agent={agent} size={30} />}
+            title={`Ask ${descriptor.label} to work on something`}
+            hint="Mention files with @ and press Enter to send."
+          />
+        ) : (
+          <div className="space-y-4">
+            {items.map((item) =>
+              item.kind === "message" ? (
+                <Message key={item.message.id} message={item.message} />
+              ) : (
+                <ToolRow
+                  key={item.tool.id}
+                  tool={item.tool}
+                  cwd={cwd}
+                  onOpenPath={onOpenFile}
+                />
+              ),
+            )}
+          </div>
+        )}
+      </AgentConversation>
 
       {state.rpcError ? (
-        <div className="mx-2 mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[10px] leading-relaxed text-destructive">
-          {state.rpcError}
-        </div>
+        <AgentError
+          message={state.rpcError}
+          onDismiss={() => useAcpStore.setState({ rpcError: null })}
+        />
       ) : null}
       <ElicitationPrompt />
       <PermissionPrompt />

@@ -139,9 +139,28 @@ describe("usePreviewAnnotateDraftStore", () => {
     store.setDraft("hello");
     expect(usePreviewAnnotateDraftStore.getState().pending).toEqual({
       text: "hello",
+      agent: "pi",
     });
     expect(usePreviewAnnotateDraftStore.getState().consume()).toBe("hello");
     expect(usePreviewAnnotateDraftStore.getState().consume()).toBeNull();
+  });
+
+  it("stages drafts for a chosen agent", () => {
+    const store = usePreviewAnnotateDraftStore.getState();
+    store.setDraft("hello", "claude");
+    expect(usePreviewAnnotateDraftStore.getState().pending).toEqual({
+      text: "hello",
+      agent: "claude",
+    });
+    expect(
+      usePreviewAnnotateDraftStore.getState().consumeFor("pi"),
+    ).toBeNull();
+    expect(
+      usePreviewAnnotateDraftStore.getState().consumeFor("claude"),
+    ).toBe("hello");
+    expect(
+      usePreviewAnnotateDraftStore.getState().consumeFor("claude"),
+    ).toBeNull();
   });
 
   it("returns null when no draft is pending", () => {

@@ -11,6 +11,11 @@ export const PANEL_AGENTS: { id: AgentId; label: string }[] = [
   ...ACP_AGENT_LIST.map((agent) => ({ id: agent.id, label: agent.label })),
 ];
 
+/** Display label for any known agent id, falling back to a capitalized id. */
+export function agentLabel(id: AgentId): string {
+  return PANEL_AGENTS.find((agent) => agent.id === id)?.label ?? id;
+}
+
 /** Keeps probed ids in panel order and drops anything Agni no longer knows. */
 export function orderKnownAgents(ids: readonly string[]): AgentId[] {
   const found = new Set(ids);

@@ -5,6 +5,8 @@ type Props = {
   anchor: RectPx;
   containerSize: { width: number; height: number };
   targetLabel: string;
+  /** Display name of the agent panel's active agent. */
+  agentLabel?: string;
   onCancel: () => void;
   onSubmit: (instruction: string) => void;
 };
@@ -22,6 +24,7 @@ export function AnnotationComposer({
   anchor,
   containerSize,
   targetLabel,
+  agentLabel = "Pi",
   onCancel,
   onSubmit,
 }: Props) {
@@ -46,10 +49,10 @@ export function AnnotationComposer({
       className="absolute z-20 overflow-hidden rounded-xl border border-border/80 bg-popover shadow-lg ring-1 ring-foreground/5"
       style={{ left, top, width: POPOVER_WIDTH }}
       role="dialog"
-      aria-label="Annotate for Pi"
+      aria-label={`Annotate for ${agentLabel}`}
     >
       <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
-        <span className="text-[11px] font-semibold">Send to Pi</span>
+        <span className="text-[11px] font-semibold">Send to {agentLabel}</span>
         <span className="min-w-0 flex-1 truncate text-right text-[10px] text-muted-foreground">
           {targetLabel}
         </span>
@@ -66,7 +69,7 @@ export function AnnotationComposer({
             }
             if (event.key === "Escape") onCancel();
           }}
-          placeholder="What should Pi change here?"
+          placeholder={`What should ${agentLabel} change here?`}
           rows={3}
           className="w-full resize-none rounded-lg border border-border bg-background px-2.5 py-2 text-[12px] leading-relaxed outline-none focus:border-ring"
         />
@@ -84,7 +87,7 @@ export function AnnotationComposer({
             onClick={() => onSubmit(instruction.trim())}
             className="rounded-md bg-primary px-2.5 py-1.5 text-[11px] text-primary-foreground disabled:opacity-40"
           >
-            Send to Pi
+            Send to {agentLabel}
           </button>
         </div>
       </div>

@@ -27,9 +27,10 @@ import { workspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 type Props = {
   cwd: string | null;
   workspace: WorkspaceEnv;
+  onOpenFile?: (path: string, line?: number) => void;
 };
 
-export function AgentPanel({ cwd, workspace }: Props) {
+export function AgentPanel({ cwd, workspace, onOpenFile }: Props) {
   const preferred = usePreferencesStore((state) => state.agentPanelAgent);
   const installed = useInstalledAgents(workspace);
   const agents = installed
@@ -79,7 +80,12 @@ export function AgentPanel({ cwd, workspace }: Props) {
     <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="min-h-0 flex-1">
         {active === "pi" ? (
-          <PiPanel cwd={cwd} workspace={workspace} agentPicker={agentPicker} />
+          <PiPanel
+            cwd={cwd}
+            workspace={workspace}
+            agentPicker={agentPicker}
+            onOpenFile={onOpenFile}
+          />
         ) : (
           <AcpPanel
             key={`${active}:${cwd ?? ""}:${workspaceScopeKey(workspace)}`}
@@ -87,6 +93,7 @@ export function AgentPanel({ cwd, workspace }: Props) {
             cwd={cwd}
             workspace={workspace}
             agentPicker={agentPicker}
+            onOpenFile={onOpenFile}
           />
         )}
       </div>

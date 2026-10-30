@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { agentLabel } from "@/modules/agent-panel/lib/installedAgents";
 import type { RectPx } from "@/modules/preview-annotate";
 import {
   AnnotationComposer,
@@ -14,6 +15,7 @@ import {
   SelectionOverlay,
   usePreviewAnnotateDraftStore,
 } from "@/modules/preview-annotate";
+import { usePreferencesStore } from "@/modules/settings/preferences";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 
 type ReadResult =
@@ -74,6 +76,7 @@ export function HtmlPreviewPane({ path, visible }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const setDraft = usePreviewAnnotateDraftStore((s) => s.setDraft);
+  const activeAgent = usePreferencesStore((s) => s.agentPanelAgent);
 
   useEffect(() => {
     if (!visible) {
@@ -165,22 +168,23 @@ export function HtmlPreviewPane({ path, visible }: Props) {
   const handleSubmit = useCallback(
     (instruction: string) => {
       if (!selection) return;
-      setDraft(
-        buildPrompt(
-          {
-            kind: "html",
-            filePath: path,
-            selector: selection.selector || selection.label,
-            label: selection.label,
-          },
-          instruction,
-        ),
-      );
-      setSelection(null);
-      setAnnotating(false);
-    },
-    [path, selection, setDraft],
-  );
+        setDraft(
+          buildPrompt(
+            {
+              kind: "html",
+              filePath: path,
+              selector: selection.selector || selection.label,
+              label: selection.label,
+            },
+            instruction,
+          ),
+          activeAgent,
+        );
+        setSelection(null);
+        setAnnotating(false);
+      },
+      [activeAgent, path, selection, setDraft],
+    );
 
   return (
     <div
@@ -202,7 +206,11 @@ export function HtmlPreviewPane({ path, visible }: Props) {
           />
           <button
             type="button"
-            title={annotating ? "Stop annotating (Esc)" : "Annotate for Pi"}
+            title={
+              annotating
+                ? "Stop annotating (Esc)"
+                : `Annotate for ${agentLabel(activeAgent)}`
+            }
             aria-pressed={annotating}
             onClick={() => {
               setAnnotating((value) => !value);
@@ -232,6 +240,7 @@ export function HtmlPreviewPane({ path, visible }: Props) {
               anchor={selection.rect}
               containerSize={containerSizeRef.current}
               targetLabel={selection.label}
+              agentLabel={agentLabel(activeAgent)}
               onCancel={() => setSelection(null)}
               onSubmit={handleSubmit}
             />

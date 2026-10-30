@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { cn } from "@/lib/utils";
+import { agentLabel } from "@/modules/agent-panel/lib/installedAgents";
 import type { RectPx } from "@/modules/preview-annotate";
 import {
   AnnotationComposer,
@@ -21,6 +22,7 @@ import {
   SelectionOverlay,
   usePreviewAnnotateDraftStore,
 } from "@/modules/preview-annotate";
+import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   PreviewAddressBar,
   type PreviewAddressBarHandle,
@@ -55,6 +57,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
     const containerRef = useRef<HTMLDivElement>(null);
     const containerSizeRef = useRef({ width: 0, height: 0 });
     const setDraft = usePreviewAnnotateDraftStore((s) => s.setDraft);
+    const activeAgent = usePreferencesStore((s) => s.agentPanelAgent);
 
     useEffect(() => {
       if (visible) {
@@ -106,11 +109,12 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
             },
             instruction,
           ),
+          activeAgent,
         );
         setSelection(null);
         setAnnotating(false);
       },
-      [selection, setDraft, url],
+      [activeAgent, selection, setDraft, url],
     );
 
     const showXfoHint = url ? !isLocalUrl(url) : false;
@@ -171,9 +175,11 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
                 />
                 <button
                   type="button"
-                  title={
-                    annotating ? "Stop annotating (Esc)" : "Annotate for Pi"
-                  }
+                    title={
+                      annotating
+                        ? "Stop annotating (Esc)"
+                        : `Annotate for ${agentLabel(activeAgent)}`
+                    }
                   aria-pressed={annotating}
                   onClick={() => {
                     setAnnotating((value) => !value);
@@ -203,6 +209,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, Props>(
                     anchor={selection}
                     containerSize={containerSizeRef.current}
                     targetLabel={url}
+                    agentLabel={agentLabel(activeAgent)}
                     onCancel={() => setSelection(null)}
                     onSubmit={handleSubmit}
                   />

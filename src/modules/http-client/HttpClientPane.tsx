@@ -19,6 +19,8 @@ import {
 import { type HighlightedNode, highlight } from "@/lib/codeHighlight";
 import { cn } from "@/lib/utils";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { agentLabel } from "@/modules/agent-panel/lib/installedAgents";
 import { importCurl } from "./lib/curl";
 import { type HttpHeader, type HttpMethod, useHttpRequest } from "./lib/http";
 
@@ -37,6 +39,7 @@ export function HttpClientPane({ url: initialUrl }: Props) {
   const [curlInput, setCurlInput] = useState("");
   const [curlError, setCurlError] = useState<string | null>(null);
   const setDraft = usePreviewAnnotateDraftStore((s) => s.setDraft);
+  const activeAgent = usePreferencesStore((s) => s.agentPanelAgent);
   const { response, send } = useHttpRequest();
 
   const canSend = url.trim().length > 0 && !response.running;
@@ -68,7 +71,7 @@ export function HttpClientPane({ url: initialUrl }: Props) {
     setCurlError(null);
   };
 
-  const sendToPi = () => {
+  const sendToAgent = () => {
     if (!response.body && response.status === null) return;
     const headerLines = response.headers
       .map(([name, value]) => `${name}: ${value}`)
@@ -85,6 +88,7 @@ export function HttpClientPane({ url: initialUrl }: Props) {
         headerLines ? `\n\n${headerLines}` : "",
         response.body ? `\n\n${response.body}` : "",
       ].join(""),
+      activeAgent,
     );
   };
 
@@ -253,8 +257,9 @@ export function HttpClientPane({ url: initialUrl }: Props) {
             {response.body || typeof response.status === "number" ? (
               <ResponseActions
                 onCopy={() => copyText(response.body)}
-                onSendToPi={sendToPi}
-                canSendToPi={Boolean(response.body)}
+                onSendToAgent={sendToAgent}
+                canSendToAgent={Boolean(response.body)}
+                agentName={agentLabel(activeAgent)}
               />
             ) : null}
             {typeof response.status === "number" ? (
@@ -479,12 +484,14 @@ async function copyText(text: string): Promise<void> {
 
 function ResponseActions({
   onCopy,
-  onSendToPi,
-  canSendToPi,
+  onSendToAgent,
+  canSendToAgent,
+  agentName,
 }: {
   onCopy: () => void;
-  onSendToPi: () => void;
-  canSendToPi: boolean;
+  onSendToAgent: () => void;
+  canSendToAgent: boolean;
+  agentName: string;
 }) {
   const [copied, setCopied] = useState(false);
   const tRef = useRef<number>(0);
@@ -502,13 +509,13 @@ function ResponseActions({
         type="button"
         variant="outline"
         size="sm"
-        disabled={!canSendToPi}
-        onClick={onSendToPi}
+        disabled={!canSendToAgent}
+        onClick={onSendToAgent}
         className="h-6 gap-1.5 px-2 text-[10px]"
-        title="Send the response to Pi in the chat panel"
+        title={`Send the response to ${agentName} in the chat panel`}
       >
         <HugeiconsIcon icon={SentIcon} size={11} strokeWidth={2} />
-        Send to Pi
+        Send to {agentName}
       </Button>
       <Button
         type="button"
