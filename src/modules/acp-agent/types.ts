@@ -1,10 +1,34 @@
-import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
 import type { WorkspaceEnv } from "@/modules/workspace";
 
+export type AcpLaunchSpec = {
+  program: string;
+  args: string[];
+  env: { name: string; value: string }[];
+  /** True when the program is an absolute path inside Agni's install dir. */
+  managed: boolean;
+  /** A user-configured local ACP command (launched without a shell). */
+  custom?: boolean;
+};
+
 export type AcpSessionConfig = {
-  agent: AcpAgentId;
+  agent: string;
   cwd: string;
   workspace: WorkspaceEnv;
+  /** Registry-installed agents carry their launch spec; built-ins resolve in Rust. */
+  launch?: AcpLaunchSpec;
+  /** Applied after the session becomes ready (used by fanout tabs). */
+  initialModel?: string | null;
+  /** Harness instance (account) this session belongs to. */
+  profileId?: string | null;
+  /** Profile environment; literal values or keychain references. */
+  profileEnv?: { name: string; value?: string; secret?: string }[];
+  /** Profile-specific launch args (Hermes `-p <name>`). */
+  profileArgs?: string[];
+  /**
+   * Set when a managed profile has no resolved isolation env. Sessions must not
+   * start, otherwise the harness falls back to the host's default account.
+   */
+  profileEnvError?: string | null;
 };
 
 export type AcpConnectionStatus =
@@ -181,7 +205,7 @@ export type AcpElicitationRequest =
     }
   | {
       mode: "url";
-      id: number |string;
+      id: number | string;
       scope: AcpElicitationScope | null;
       message: string;
       title: string | null;
@@ -238,12 +262,19 @@ export type AcpCapabilities = {
   promptAudio: boolean;
   promptEmbeddedContext: boolean;
   authLogout: boolean;
+  /** The agent advertises checkpoint/rollback support (draft RFD). */
+  checkpoint: boolean;
+  rollback: boolean;
 };
 
 export type AcpConfigOptionValue = {
   value: string;
   name: string;
   description?: string;
+  /** Provider/group identifier from SessionConfigSelectGroup (v1 `group` or v2 `groupId`). */
+  groupId?: string;
+  /** Human-readable group label from SessionConfigSelectGroup `name`. */
+  groupName?: string;
 };
 
 export type AcpConfigOption = {
@@ -272,6 +303,12 @@ export type AcpModel = {
   modelId: string;
   name: string;
   description: string | null;
+  /** Provider label derived from ModelInfo, e.g. `openrouter`, `anthropic`. Null when unknown. */
+  provider?: string | null;
+  /** Explicit ACP group id when the agent sends a grouped availableModels entry (provider group). */
+  groupId?: string;
+  /** Human-readable group label for the provider when grouped. */
+  groupName?: string;
 };
 
 /** ACP `SessionModelState`: the models a session can switch between. */
@@ -320,6 +357,8 @@ export const EMPTY_ACP_CAPABILITIES: AcpCapabilities = {
   promptAudio: false,
   promptEmbeddedContext: false,
   authLogout: false,
+  checkpoint: false,
+  rollback: false,
 };
 
 export type AcpState = {

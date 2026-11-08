@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   appendUserPrompt,
+  groupConfigValuesByProvider,
+  groupModelsByProvider,
   mergeConfigOptions,
   parseAgentCapabilities,
   parseAuthMethods,
@@ -650,6 +652,8 @@ describe("capability and config parsing", () => {
       promptAudio: false,
       promptEmbeddedContext: true,
       authLogout: false,
+      checkpoint: false,
+      rollback: false,
     });
   });
 
@@ -792,10 +796,70 @@ describe("capability and config parsing", () => {
           modelId: "openrouter:sonnet",
           name: "OpenRouter - Sonnet",
           description: "Provider: OpenRouter",
+          provider: "OpenRouter",
+          groupId: "OpenRouter",
+          groupName: "OpenRouter",
         },
-        { modelId: "local:qwen", name: "Local - Qwen", description: null },
+        {
+          modelId: "local:qwen",
+          name: "Local - Qwen",
+          description: null,
+          provider: "local",
+          groupId: "local",
+          groupName: "local",
+        },
       ],
     });
+  });
+
+  it("groups models by provider", () => {
+    const state = parseModelState({
+      currentModelId: "anthropic/claude",
+      availableModels: [
+        { modelId: "openrouter/sonnet", name: "openrouter/Sonnet" },
+        { modelId: "anthropic/claude", name: "anthropic/Claude" },
+        { modelId: "openrouter/opus", name: "openrouter/Opus" },
+        { modelId: "opencode/spark", name: "opencode/Spark" },
+      ],
+    });
+    expect(state?.availableModels.map((m) => m.provider)).toEqual([
+      "openrouter",
+      "openrouter",
+      "anthropic",
+      "opencode",
+    ]);
+    const groups = groupModelsByProvider(state?.availableModels ?? []);
+    expect(groups).toHaveLength(3);
+    expect(groups[0].name).toBe("openrouter");
+    expect(groups[0].models).toHaveLength(2);
+    expect(groups[1].name).toBe("anthropic");
+    expect(groups[2].name).toBe("opencode");
+  });
+
+  it("groups models from explicit group wrappers", () => {
+    const state = parseModelState({
+      currentModelId: "m1",
+      availableModels: [
+        {
+          groupId: "openrouter",
+          name: "OpenRouter",
+          options: [
+            { modelId: "openrouter/a", name: "A" },
+            { modelId: "openrouter/b", name: "B" },
+          ],
+        },
+        {
+          group: "anthropic",
+          name: "Anthropic",
+          options: [{ modelId: "anthropic/c", name: "C" }],
+        },
+      ],
+    });
+    expect(state?.availableModels).toHaveLength(3);
+    expect(state?.availableModels[0].groupName).toBe("OpenRouter");
+    expect(state?.availableModels[2].groupName).toBe("Anthropic");
+    const groups = groupModelsByProvider(state?.availableModels ?? []);
+    expect(groups.map((g) => g.name)).toEqual(["OpenRouter", "Anthropic"]);
   });
 
   it("drops malformed models and an empty catalog", () => {
@@ -842,13 +906,38 @@ describe("capability and config parsing", () => {
     expect(options).toHaveLength(2);
     expect(options[0].id).toBe("model");
     expect(options[0].options).toEqual([
-      { value: "m1", name: "Model 1", description: "fast" },
-      { value: "m2", name: "Model 2" },
+      { value: "m1", name: "Model 1", description: "fast", groupId: "recommended", groupName: "Recommended" },
+      { value: "m2", name: "Model 2", groupId: "other", groupName: "Other" },
     ]);
     expect(options[1].id).toBe("effort");
     expect(options[1].options).toEqual([
-      { value: "default", name: "Default" },
+      { value: "default", name: "Default", groupId: "levels", groupName: "Levels" },
     ]);
+    const groups = groupConfigValuesByProvider(options[0].options);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].name).toBe("Recommended");
+  });
+
+  it("infers provider groups for flat provider/model config options", () => {
+    const options = parseConfigOptions([
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "anthropic/claude",
+        options: [
+          { value: "anthropic/claude", name: "anthropic/Claude" },
+          { value: "openrouter/sonnet", name: "openrouter/Sonnet" },
+        ],
+      },
+    ]);
+    expect(options[0].options).toEqual([
+      { value: "anthropic/claude", name: "anthropic/Claude", groupId: "anthropic", groupName: "anthropic" },
+      { value: "openrouter/sonnet", name: "openrouter/Sonnet", groupId: "openrouter", groupName: "openrouter" },
+    ]);
+    const groups = groupConfigValuesByProvider(options[0].options);
+    expect(groups.map((g) => g.name)).toEqual(["anthropic", "openrouter"]);
   });
 
   it("ignores unrecognized option types", () => {

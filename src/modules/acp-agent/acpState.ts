@@ -48,6 +48,62 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function readProviderFromMeta(meta: unknown): string | null {
+  const object = asObject(meta);
+  if (!object) return null;
+  for (const key of ["provider", "providerId", "provider_id", "providerName"]) {
+    const value = asString(object[key]);
+    if (value && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
+function readProviderFromDescription(description: string | null): string | null {
+  if (!description) return null;
+  const match = description.match(/^\s*Provider\s*:\s*(.+?)\s*$/i);
+  return match ? match[1].trim() : null;
+}
+
+function providerFromId(id: string): string | null {
+  if (!id) return null;
+  const trimmed = id.trim();
+  const slashIdx = trimmed.indexOf("/");
+  if (slashIdx > 0) {
+    const provider = trimmed.slice(0, slashIdx).trim();
+    return provider.length > 0 ? provider : null;
+  }
+  const colonIdx = trimmed.indexOf(":");
+  if (colonIdx > 0) {
+    const provider = trimmed.slice(0, colonIdx).trim();
+    return provider.length > 0 ? provider : null;
+  }
+  return null;
+}
+
+function displayNameFromProviderId(providerId: string): string {
+  return providerId;
+}
+
+/**
+ * Provider inferred from value/name/description/meta.
+ * ACP spec v1 groups via `group`/`name`, v2 via `groupId`/`name`; when no group
+ * is sent, `provider/model` and `provider:model` ids (opencode, omp, openrouter)
+ * carry the provider in the prefix.
+ */
+function inferProvider(
+  id: string,
+  name: string,
+  description: string | null,
+  meta: unknown,
+): string | null {
+  return (
+    readProviderFromMeta(meta) ??
+    readProviderFromDescription(description) ??
+    providerFromId(id) ??
+    providerFromId(name)
+  );
+}
+
 function asNumber(value: unknown): number | null {
   return typeof value === "number" ? value : null;
 }
@@ -847,27 +903,132 @@ export function mergeConfigOptions(
   return Array.isArray(value) ? parseConfigOptions(value) : previous;
 }
 
-function parseConfigOptionValues(value: unknown): AcpConfigOptionValue[] {
+function parseConfigOptionValues(
+  value: unknown,
+  group?: { id: string | null; name: string | null },
+): AcpConfigOptionValue[] {
   if (!Array.isArray(value)) return [];
   const values: AcpConfigOptionValue[] = [];
   for (const item of value) {
     const object = asObject(item);
     if (!object) continue;
+    // ACP SessionConfigSelectGroup: v1 `group`, v2 `groupId`, both with `name` + `options`.
     if (Array.isArray(object.options)) {
-      values.push(...parseConfigOptionValues(object.options));
+      const groupId =
+        asString(object.groupId) ?? asString(object.group) ?? asString(object.id);
+      const groupName = asString(object.name);
+      const nestedGroup =
+        groupId !== null || groupName !== null
+          ? { id: groupId, name: groupName }
+          : group;
+      values.push(...parseConfigOptionValues(object.options, nestedGroup));
       continue;
     }
     const optionValue = asString(object.value);
     const name = asString(object.name);
     if (optionValue === null || !name) continue;
     const description = asString(object.description);
-    values.push(
-      description
-        ? { value: optionValue, name, description }
-        : { value: optionValue, name },
-    );
+    const metaProvider = readProviderFromMeta(object._meta);
+    const explicitGroupId = group?.id ?? null;
+    const explicitGroupName = group?.name ?? null;
+    // Use explicit group when present, otherwise infer provider from id/name/description/meta
+    // so flat provider/model lists (opencode, omp) still group in the UI.
+    const inferred = explicitGroupId
+      ? null
+      : inferProvider(optionValue, name, description, object._meta);
+    const groupId = explicitGroupId ?? metaProvider ?? inferred ?? undefined;
+    const groupName =
+      explicitGroupName ?? groupId ?? undefined;
+    const base: AcpConfigOptionValue = {
+      value: optionValue,
+      name,
+      ...(description ? { description } : {}),
+      ...(groupId ? { groupId } : {}),
+      ...(groupName ? { groupName } : {}),
+    };
+    values.push(base);
   }
   return values;
+}
+
+function sortModelsByProvider(models: AcpModel[]): AcpModel[] {
+  const rank = new Map<string, number>();
+  for (const model of models) {
+    const key = (model.provider ?? model.groupId ?? "").toLowerCase();
+    if (!rank.has(key)) rank.set(key, rank.size);
+  }
+  return [...models].sort((a, b) => {
+    const ka = (a.provider ?? a.groupId ?? "").toLowerCase();
+    const kb = (b.provider ?? b.groupId ?? "").toLowerCase();
+    const ra = rank.get(ka) ?? 0;
+    const rb = rank.get(kb) ?? 0;
+    if (ra !== rb) return ra - rb;
+    const nameOrder = a.name.localeCompare(b.name);
+    if (nameOrder !== 0) return nameOrder;
+    return a.modelId.localeCompare(b.modelId);
+  });
+}
+
+export type ModelGroup = {
+  id: string;
+  name: string;
+  models: AcpModel[];
+};
+
+export function groupModelsByProvider(models: AcpModel[]): ModelGroup[] {
+  const groups: ModelGroup[] = [];
+  const index = new Map<string, ModelGroup>();
+  for (const model of models) {
+    const id = model.groupId ?? model.provider ?? "";
+    const name = model.groupName ?? model.provider ?? (id ? id : "Models");
+    const key = id.toLowerCase() || "models";
+    let group = index.get(key);
+    if (!group) {
+      if (groups.length === 0 && id === "" && models.length > 1) {
+        // Check if there are grouped models at all; if no provider for any, keep single group without header.
+        const anyProvider = models.some((m) => m.provider || m.groupId);
+        if (!anyProvider) {
+          group = { id: "", name: "", models: [] };
+          groups.push(group);
+          index.set(key, group);
+        }
+      }
+      if (!group) {
+        group = { id, name, models: [] };
+        groups.push(group);
+        index.set(key, group);
+      }
+    }
+    group.models.push(model);
+  }
+  // Deterministic provider ordering, preserving first-seen order.
+  return groups;
+}
+
+export type ConfigValueGroup = {
+  id: string;
+  name: string;
+  values: AcpConfigOptionValue[];
+};
+
+export function groupConfigValuesByProvider(
+  values: AcpConfigOptionValue[],
+): ConfigValueGroup[] {
+  const groups: ConfigValueGroup[] = [];
+  const index = new Map<string, ConfigValueGroup>();
+  for (const value of values) {
+    const id = value.groupId ?? "";
+    const name = value.groupName ?? (id ? id : "");
+    const key = id.toLowerCase() || "models";
+    let group = index.get(key);
+    if (!group) {
+      group = { id, name, values: [] };
+      groups.push(group);
+      index.set(key, group);
+    }
+    group.values.push(value);
+  }
+  return groups;
 }
 
 export function parseModeState(value: unknown): AcpModeState | null {
@@ -901,18 +1062,50 @@ export function parseModelState(value: unknown): AcpModelState | null {
     ? object.availableModels
     : [];
   const availableModels: AcpModel[] = [];
-  for (const item of available) {
+
+  const pushModel = (
+    item: unknown,
+    explicitGroup?: { id: string | null; name: string | null },
+  ) => {
     const model = asObject(item);
-    const modelId = model ? asString(model.modelId) : null;
-    const name = model ? asString(model.name) : null;
-    if (!modelId || !name) continue;
-    const description = model ? asString(model.description) : null;
-    availableModels.push({ modelId, name, description });
-  }
+    if (!model) return;
+    if (Array.isArray(model.options)) {
+      const groupId =
+        asString(model.groupId) ?? asString(model.group) ?? asString(model.id);
+      const groupName = asString(model.name);
+      const nested =
+        groupId !== null || groupName !== null
+          ? { id: groupId, name: groupName }
+          : explicitGroup;
+      for (const child of model.options) pushModel(child, nested);
+      return;
+    }
+    const modelId = asString(model.modelId) ?? asString(model.id) ?? asString(model.value);
+    const name = asString(model.name);
+    if (!modelId || !name) return;
+    const description = asString(model.description);
+    const provider = explicitGroup?.name
+      ? explicitGroup.name
+      : explicitGroup?.id
+        ? displayNameFromProviderId(explicitGroup.id)
+        : inferProvider(modelId, name, description, model._meta);
+    const providerId = explicitGroup?.id ?? provider ?? undefined;
+    const providerName = explicitGroup?.name ?? provider ?? undefined;
+    availableModels.push({
+      modelId,
+      name,
+      description,
+      provider: provider ?? null,
+      ...(providerId ? { groupId: providerId, groupName: providerName } : {}),
+    });
+  };
+
+  for (const item of available) pushModel(item);
+
   if (availableModels.length === 0) return null;
   return {
     currentModelId: asString(object.currentModelId),
-    availableModels,
+    availableModels: sortModelsByProvider(availableModels),
   };
 }
 
@@ -955,6 +1148,14 @@ export function parseAgentCapabilities(value: unknown): AcpCapabilities {
       prompt?.embeddedContext === true ||
       asObject(prompt?.embeddedContext) !== null,
     authLogout: auth?.logout === true || asObject(auth?.logout) !== null,
+    checkpoint:
+      session?.checkpoint !== undefined ||
+      sessionCapabilities?.checkpoint !== undefined ||
+      asObject(object.checkpoint) !== null,
+    rollback:
+      session?.rollback !== undefined ||
+      sessionCapabilities?.rollback !== undefined ||
+      asObject(object.rollback) !== null,
   };
 }
 

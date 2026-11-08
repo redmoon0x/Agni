@@ -1,11 +1,13 @@
-import {
+﻿import {
   Add01Icon,
   ArrowDown01Icon,
   AttachmentIcon,
   Clock01Icon,
   FileEditIcon,
   Loading03Icon,
+  MaximizeScreenIcon,
   MoreHorizontalIcon,
+  PanelRightIcon,
   PowerIcon,
   RefreshIcon,
   Robot01Icon,
@@ -15,8 +17,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   type ClipboardEvent,
+  Fragment,
   type KeyboardEvent,
-  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -51,32 +53,28 @@ import {
   defaultElicitationValues,
   elicitationContent,
 } from "@/modules/acp-agent/elicitation";
+import {
+  groupConfigValuesByProvider,
+  groupModelsByProvider,
+} from "@/modules/acp-agent/acpState";
 import { HermesLogoIcon } from "@/modules/acp-agent/HermesLogoIcon";
 import { KiloLogoIcon } from "@/modules/acp-agent/KiloLogoIcon";
-import { type AcpAgentId, acpAgent } from "@/modules/acp-agent/lib/agent";
-import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
+import { acpAgent, isAcpAgentId } from "@/modules/acp-agent/lib/agent";
 import {
-  cancelAcp,
-  deleteAcpSession,
-  ensureAcpStarted,
-  forkAcpSession,
-  listAcpSessions,
-  loadAcpSession,
-  loginAcp,
-  logoutAcp,
-  newAcpSession,
-  promptAcp,
-  refreshAcpTerminal,
-  respondToElicitation,
-  respondToPermission,
-  restartAcp,
-  resumeAcpSession,
-  setAcpConfigOption,
-  setAcpMode,
-  setAcpModel,
-  stopAcp,
+  AGNI_RUNTIME_MODES,
+  resolveCompatibleRuntimeMode,
+  runtimeModeForCurrent,
+} from "@/modules/acp-agent/lib/runtimeModes";
+import { acpTurnFiles } from "@/modules/acp-agent/lib/turnFiles";
+import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
+import { OmpLogoIcon } from "@/modules/acp-agent/OmpLogoIcon";
+import type { AcpClient } from "@/modules/acp-agent/session/client";
+import {
+  AcpSessionProvider,
+  useAcpClient,
+  useAcpState,
   useAcpStore,
-} from "@/modules/acp-agent/store";
+} from "@/modules/acp-agent/session/context";
 import type {
   AcpAttachment,
   AcpConfigOption,
@@ -85,20 +83,35 @@ import type {
   AcpMessage,
   AcpModeState,
   AcpPermissionSubject,
+  AcpSessionConfig,
   AcpSessionInfo,
   AcpToolCall,
   AcpToolContent,
 } from "@/modules/acp-agent/types";
+import {
+  forgetAgentTab,
+  reportAgentTabStatus,
+  tabStatusFromRun,
+} from "@/modules/agent-panel/lib/agentTabStatus";
 import { clipboardImageFiles } from "@/modules/agent-panel/lib/clipboardImages";
+import {
+  defaultProfileFor,
+  managedProfileEnvError,
+  profileCustomLaunch,
+  profileEnvWire,
+  profileExtraArgs,
+} from "@/modules/agent-panel/lib/profile";
 import {
   formatCost,
   formatCount,
   formatTokens,
 } from "@/modules/agent-panel/lib/usage";
 import { AgentCard, AgentError } from "@/modules/agent-ui/Card";
+import { AgentChangedFilesCard } from "@/modules/agent-ui/ChangedFilesCard";
 import {
   AgentAttachmentChip,
   AgentAttachmentRow,
+  AgentComposerChip,
   AgentComposerFrame,
   AgentComposerIconButton,
   AgentComposerSendButton,
@@ -114,25 +127,56 @@ import {
   type AgentRunStatus,
   type AgentSubtitleTone,
 } from "@/modules/agent-ui/Header";
+import { groupToolRuns } from "@/modules/agent-ui/lib/groupToolRuns";
+import { minimapMarkers } from "@/modules/agent-ui/lib/minimap";
 import { baseName, displayPath } from "@/modules/agent-ui/lib/path";
-import { AgentAssistantMessage, AgentUserMessage } from "@/modules/agent-ui/Messages";
+import {
+  recallPrompt,
+  recordPrompt,
+} from "@/modules/agent-ui/lib/promptHistory";
+import { playCompletionSound } from "@/modules/agent-ui/lib/sounds";
+import {
+  AgentAssistantMessage,
+  AgentUserMessage,
+} from "@/modules/agent-ui/Messages";
+import { AgentQueuedRuns } from "@/modules/agent-ui/QueuedRunsControl";
 import { AgentThinking } from "@/modules/agent-ui/Thinking";
+import { AgentTimelineMinimap } from "@/modules/agent-ui/TimelineMinimap";
+import { AgentToolGroup } from "@/modules/agent-ui/ToolGroup";
 import { AgentToolRow, type AgentToolStatus } from "@/modules/agent-ui/ToolRow";
+import { usePromptQueue } from "@/modules/agent-ui/usePromptQueue";
 import {
   type CommandPaletteFileHit,
   useWorkspaceFileSearch,
 } from "@/modules/command-palette/useWorkspaceFileSearch";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
+import { AgentProfileChip } from "@/modules/agent-panel/AgentProfileChip";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { setAcpAdditionalDirectories } from "@/modules/settings/store";
+import {
+  type AgentPanelMode,
+  setAcpAdditionalDirectories,
+  setAcpRuntimeMode,
+} from "@/modules/settings/store";
 import { type WorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
 
 type Props = {
-  agent: AcpAgentId;
+  agent: string;
   cwd: string | null;
   workspace: WorkspaceEnv;
-  agentPicker?: ReactNode;
   onOpenFile?: (path: string, line?: number) => void;
+  onOpenDiff?: (path: string) => void;
+  initialModel?: string | null;
+  initialPrompt?: string | null;
+  onFanout?: (models: { model: string; prompt: string }[]) => void;
+  tabId?: number;
+  active?: boolean;
+  profileId?: string | null;
+  onSwitchProfile?: (profileId: string) => void;
+  /** Restored tab: resume its latest harness session once connected. */
+  resumeLatest?: boolean;
+  /** Full-workspace surface (focus) or the compact right dock. */
+  layoutMode: AgentPanelMode;
+  onToggleLayout: () => void;
 };
 
 type AtToken = { query: string; start: number };
@@ -141,10 +185,47 @@ type MentionEntry = { rel: string; path: string };
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
 
-function runAcpAction(action: Promise<unknown>) {
+function runAcpAction(client: AcpClient, action: Promise<unknown>) {
   void action.catch((error) => {
-    useAcpStore.setState({ rpcError: String(error) });
+    client.setLocal({ rpcError: String(error) });
   });
+}
+
+function formatProviderLabel(providerId: string, providerName: string): string {
+  const raw = providerName || providerId;
+  if (!raw) return "";
+  // Keep explicit human-readable names like "OpenRouter" or "Recommended".
+  if (/[A-Z]/.test(raw) || raw.includes(" ")) return raw;
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function stripProviderPrefix(name: string, providerId: string, groupName: string): string {
+  const candidates = [groupName, providerId].filter(Boolean);
+  let result = name.trim();
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const prefix = `${candidate}/`;
+    if (result.toLowerCase().startsWith(prefix.toLowerCase())) {
+      result = result.slice(prefix.length);
+      return result.trim();
+    }
+    const dash = `${candidate} - `;
+    if (result.toLowerCase().startsWith(dash.toLowerCase())) {
+      result = result.slice(dash.length);
+      return result.trim();
+    }
+    const colon = `${candidate}:`;
+    if (result.toLowerCase().startsWith(colon.toLowerCase())) {
+      result = result.slice(colon.length);
+      return result.trim();
+    }
+  }
+  return result;
+}
+
+function staticAgentLabel(agent: string): string {
+  if (agent === "custom") return "Custom ACP";
+  return isAcpAgentId(agent) ? acpAgent(agent).label : agent;
 }
 
 function AgentMark({
@@ -152,7 +233,7 @@ function AgentMark({
   size,
   className,
 }: {
-  agent: AcpAgentId;
+  agent: string;
   size: number;
   className?: string;
 }) {
@@ -170,6 +251,9 @@ function AgentMark({
   }
   if (agent === "hermes") {
     return <HermesLogoIcon size={size} className={className} />;
+  }
+  if (agent === "omp") {
+    return <OmpLogoIcon size={size} className={className} />;
   }
   return <HugeiconsIcon icon={Robot01Icon} size={size} className={className} />;
 }
@@ -233,11 +317,11 @@ function DiffChangeList({ changes }: { changes: AcpDiffChange[] }) {
             className={cn(
               "shrink-0 uppercase",
               change.operation === "delete" && "text-destructive",
-              change.operation === "add" &&
-                "text-[var(--terminal-ansi-green)]",
+              change.operation === "add" && "text-[var(--terminal-ansi-green)]",
               (change.operation === "modify" ||
                 change.operation === "move" ||
-                change.operation === "copy") && "text-primary",
+                change.operation === "copy") &&
+                "text-primary",
               change.operation !== "delete" &&
                 change.operation !== "add" &&
                 change.operation !== "modify" &&
@@ -249,7 +333,9 @@ function DiffChangeList({ changes }: { changes: AcpDiffChange[] }) {
             {change.operation}
           </span>
           <span className="min-w-0 flex-1 break-all text-muted-foreground">
-            {change.oldPath ? `${change.oldPath} -> ${change.path}` : change.path}
+            {change.oldPath
+              ? `${change.oldPath} -> ${change.path}`
+              : change.path}
           </span>
           {change.fileType && change.fileType !== "text" ? (
             <span className="shrink-0 text-muted-foreground/70">
@@ -276,7 +362,9 @@ function ToolContentItem({
     // old/new text pair, so the patch (or the change list) carries the render.
     const binary =
       content.changes.length > 0 &&
-      content.changes.every((change) => change.fileType && change.fileType !== "text");
+      content.changes.every(
+        (change) => change.fileType && change.fileType !== "text",
+      );
     return (
       <div className="border-t border-border/40">
         <div className="px-2.5 pt-1.5 font-mono text-[10px] text-muted-foreground">
@@ -328,18 +416,19 @@ function ToolContentItem({
 }
 
 function TerminalOutput({ terminalId }: { terminalId: string }) {
+  const client = useAcpClient();
   const terminal = useAcpStore((state) => state.terminals[terminalId]);
   const polling =
     terminal === undefined ||
     (terminal.source !== "agent" && terminal.state !== "exited");
   useEffect(() => {
     if (!polling) return;
-    void refreshAcpTerminal(terminalId);
+    void client.refreshTerminal(terminalId);
     const timer = window.setInterval(() => {
-      void refreshAcpTerminal(terminalId);
+      void client.refreshTerminal(terminalId);
     }, 900);
     return () => window.clearInterval(timer);
-  }, [polling, terminalId]);
+  }, [client, polling, terminalId]);
   if (!terminal) {
     return (
       <div className="border-t border-border/40 px-2.5 py-2 font-mono text-[10px] text-muted-foreground">
@@ -354,7 +443,10 @@ function TerminalOutput({ terminalId }: { terminalId: string }) {
           {terminal.title ?? terminal.command ?? terminalId}
         </span>
         {terminal.cwd ? (
-          <span className="min-w-0 truncate text-muted-foreground/70" title={terminal.cwd}>
+          <span
+            className="min-w-0 truncate text-muted-foreground/70"
+            title={terminal.cwd}
+          >
             {terminal.cwd}
           </span>
         ) : null}
@@ -476,9 +568,7 @@ function ToolRow({
                 key={contentKey(content)}
                 content={content}
                 cwd={cwd}
-                onOpenPath={
-                  onOpenPath ? (path) => onOpenPath(path) : undefined
-                }
+                onOpenPath={onOpenPath ? (path) => onOpenPath(path) : undefined}
               />
             ))}
           </div>
@@ -488,7 +578,16 @@ function ToolRow({
   );
 }
 
-function Message({ message }: { message: AcpMessage }) {
+function Message({
+  message,
+  streaming,
+}: {
+  message: AcpMessage;
+  streaming?: boolean;
+}) {
+  const client = useAcpClient();
+  const sessionId = useAcpStore((state) => state.sessionId);
+  const canFork = useAcpStore((state) => state.capabilities.sessionFork);
   const extras = message.content
     .filter((content) => content.type !== "text")
     .map((content, index) => (
@@ -508,7 +607,24 @@ function Message({ message }: { message: AcpMessage }) {
     return <AgentUserMessage text={message.text}>{extras}</AgentUserMessage>;
   }
   return (
-    <AgentAssistantMessage text={message.text}>{extras}</AgentAssistantMessage>
+    <AgentAssistantMessage
+      text={message.text}
+      streaming={streaming}
+      actions={
+        canFork && sessionId ? (
+          <button
+            type="button"
+            onClick={() => runAcpAction(client, client.forkSession(sessionId))}
+            title="Fork this session from here"
+            className="rounded-md border border-border/50 bg-popover/95 px-1.5 py-1 text-[9px] text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground"
+          >
+            Fork
+          </button>
+        ) : undefined
+      }
+    >
+      {extras}
+    </AgentAssistantMessage>
   );
 }
 
@@ -588,7 +704,11 @@ function PlanList() {
   );
 }
 
-function PermissionSubjectDetail({ subject }: { subject: AcpPermissionSubject }) {
+function PermissionSubjectDetail({
+  subject,
+}: {
+  subject: AcpPermissionSubject;
+}) {
   if (subject.type === "tool_call") {
     const tool = subject.toolCall;
     if (!tool.title && !tool.name) return null;
@@ -623,6 +743,7 @@ function PermissionSubjectDetail({ subject }: { subject: AcpPermissionSubject })
 }
 
 function PermissionPrompt() {
+  const client = useAcpClient();
   const permission = useAcpStore((state) => state.permission);
   if (!permission) return null;
   return (
@@ -642,7 +763,7 @@ function PermissionPrompt() {
           <button
             key={option.optionId}
             type="button"
-            onClick={() => respondToPermission(option.optionId)}
+            onClick={() => client.respondPermission(option.optionId)}
             className={cn(
               "rounded-md border px-2.5 py-1 text-[11px] transition-colors",
               option.kind.startsWith("reject")
@@ -663,6 +784,7 @@ function ElicitationForm({
 }: {
   elicitation: Extract<AcpElicitationRequest, { mode: "form" }>;
 }) {
+  const client = useAcpClient();
   const [values, setValues] = useState<AcpElicitationValues>(() =>
     defaultElicitationValues(elicitation.fields),
   );
@@ -673,7 +795,7 @@ function ElicitationForm({
       setInvalid(true);
       return;
     }
-    respondToElicitation("accept", content);
+    client.respondElicitation("accept", content);
   };
 
   return (
@@ -684,11 +806,30 @@ function ElicitationForm({
       tone="primary"
     >
       <div className="space-y-2.5">
-        {elicitation.fields.map((field) => {
+        {elicitation.fields.length > 1 ? (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[9px] tracking-wide text-muted-foreground/60 uppercase">
+              {elicitation.fields.length} questions
+            </span>
+            {elicitation.fields.map((field, index) => (
+              <span
+                key={field.name}
+                className="rounded-sm bg-foreground/[0.06] px-1.5 py-0.5 text-[9.5px] text-muted-foreground"
+              >
+                {index + 1}. {field.title || field.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {elicitation.fields.map((field, index) => {
           const id = `elicitation-${String(elicitation.id)}-${field.name}`;
           const value = values[field.name];
           return (
-            <div key={field.name} className="space-y-1">
+            <div
+              key={field.name}
+              className="space-y-1"
+              aria-label={`Question ${index + 1} of ${elicitation.fields.length}`}
+            >
               {field.type === "boolean" ? (
                 <label
                   htmlFor={id}
@@ -752,12 +893,16 @@ function ElicitationForm({
                               onChange={(event) =>
                                 setValues((current) => {
                                   const existing = current[field.name];
-                                  const ids = Array.isArray(existing) ? existing : [];
+                                  const ids = Array.isArray(existing)
+                                    ? existing
+                                    : [];
                                   return {
                                     ...current,
                                     [field.name]: event.target.checked
                                       ? [...ids, choice.id]
-                                      : ids.filter((item) => item !== choice.id),
+                                      : ids.filter(
+                                          (item) => item !== choice.id,
+                                        ),
                                   };
                                 })
                               }
@@ -823,7 +968,7 @@ function ElicitationForm({
         </button>
         <button
           type="button"
-          onClick={() => respondToElicitation("cancel")}
+          onClick={() => client.respondElicitation("cancel")}
           className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05]"
         >
           Cancel
@@ -856,6 +1001,7 @@ function OpaqueElicitation({
 }: {
   elicitation: Extract<AcpElicitationRequest, { mode: "other" }>;
 }) {
+  const client = useAcpClient();
   return (
     <AgentCard
       eyebrow="Input requested"
@@ -867,7 +1013,7 @@ function OpaqueElicitation({
       </p>
       <button
         type="button"
-        onClick={() => respondToElicitation("decline")}
+        onClick={() => client.respondElicitation("decline")}
         className="mt-2.5 rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05]"
       >
         Decline
@@ -881,6 +1027,7 @@ function UrlElicitation({
 }: {
   elicitation: Extract<AcpElicitationRequest, { mode: "url" }>;
 }) {
+  const client = useAcpClient();
   let host = elicitation.url;
   try {
     host = new URL(elicitation.url).host;
@@ -891,7 +1038,7 @@ function UrlElicitation({
     if (action === "accept") {
       void openUrl(elicitation.url).catch(() => {});
     }
-    respondToElicitation(action);
+    client.respondElicitation(action);
   };
   return (
     <AgentCard
@@ -937,9 +1084,12 @@ function UrlElicitation({
 }
 
 function ConfigSelect({ option }: { option: AcpConfigOption }) {
+  const client = useAcpClient();
   const current =
     option.options.find((value) => value.value === option.currentValue)?.name ??
     option.name;
+  const groups = groupConfigValuesByProvider(option.options);
+  const showGroups = groups.length > 1;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -957,31 +1107,73 @@ function ConfigSelect({ option }: { option: AcpConfigOption }) {
         className="max-h-80 w-56 overflow-y-auto"
       >
         <DropdownMenuLabel>{option.name}</DropdownMenuLabel>
-        {option.options.map((value) => (
-          <DropdownMenuItem
-            key={value.value}
-            onSelect={() =>
-              runAcpAction(setAcpConfigOption(option.id, value.value))
-            }
-          >
-            <span className="min-w-0 flex-1 truncate">{value.name}</span>
-            {value.value === option.currentValue ? (
-              <HugeiconsIcon icon={Tick02Icon} className="ml-auto" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
+        {showGroups
+          ? groups.map((group) => (
+              <Fragment key={group.id || group.name || "ungrouped"}>
+                <DropdownMenuLabel className="text-muted-foreground">
+                  {formatProviderLabel(group.id, group.name)}
+                </DropdownMenuLabel>
+                {group.values.map((value) => (
+                  <DropdownMenuItem
+                    key={value.value}
+                    onSelect={() =>
+                      runAcpAction(
+                        client,
+                        client.setConfigOption(option.id, value.value),
+                      )
+                    }
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {stripProviderPrefix(value.name, group.id, group.name)}
+                    </span>
+                    {value.description ? (
+                      <span className="ml-2 max-w-24 truncate text-[10px] text-muted-foreground">
+                        {value.description}
+                      </span>
+                    ) : null}
+                    {value.value === option.currentValue ? (
+                      <HugeiconsIcon icon={Tick02Icon} className="ml-auto" />
+                    ) : null}
+                  </DropdownMenuItem>
+                ))}
+              </Fragment>
+            ))
+          : option.options.map((value) => (
+              <DropdownMenuItem
+                key={value.value}
+                onSelect={() =>
+                  runAcpAction(
+                    client,
+                    client.setConfigOption(option.id, value.value),
+                  )
+                }
+              >
+                <span className="min-w-0 flex-1 truncate">{value.name}</span>
+                {value.description ? (
+                  <span className="ml-2 max-w-24 truncate text-[10px] text-muted-foreground">
+                    {value.description}
+                  </span>
+                ) : null}
+                {value.value === option.currentValue ? (
+                  <HugeiconsIcon icon={Tick02Icon} className="ml-auto" />
+                ) : null}
+              </DropdownMenuItem>
+            ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
 function ConfigToggle({ option }: { option: AcpConfigOption }) {
+  const client = useAcpClient();
   const on = option.currentValue === true;
   return (
     <button
       type="button"
       title={option.name}
-      onClick={() => runAcpAction(setAcpConfigOption(option.id, !on))}
+      onClick={() =>
+        runAcpAction(client, client.setConfigOption(option.id, !on))
+      }
       className={cn(
         "rounded-md px-1.5 py-1 text-[10px] font-medium hover:bg-foreground/[0.05]",
         on ? "text-foreground" : "text-muted-foreground",
@@ -992,35 +1184,64 @@ function ConfigToggle({ option }: { option: AcpConfigOption }) {
   );
 }
 
-function ModeSelect({ modeState }: { modeState: AcpModeState }) {
+function ModeSelect({
+  modeState,
+  agent,
+}: {
+  modeState: AcpModeState;
+  agent: string;
+}) {
+  const client = useAcpClient();
   const current = useAcpStore((state) => state.currentMode);
+  const preferred =
+    usePreferencesStore((state) => state.acpRuntimeMode[agent]) ?? "supervised";
+  const activePolicy = runtimeModeForCurrent(current, modeState) ?? preferred;
   const active =
-    modeState.availableModes.find((mode) => mode.id === current) ??
-    modeState.availableModes[0];
+    AGNI_RUNTIME_MODES.find((mode) => mode.id === activePolicy) ??
+    AGNI_RUNTIME_MODES[0];
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          title="Session mode"
+          title="Permission mode"
           className="max-w-32 truncate rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
         >
-          {active?.name ?? "Mode"}
+          {active.label}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="end" className="w-56">
-        <DropdownMenuLabel>Mode</DropdownMenuLabel>
-        {modeState.availableModes.map((mode) => (
-          <DropdownMenuItem
-            key={mode.id}
-            onSelect={() => runAcpAction(setAcpMode(mode.id))}
-          >
-            <span className="min-w-0 flex-1 truncate">{mode.name}</span>
-            {mode.id === active?.id ? (
-              <HugeiconsIcon icon={Tick02Icon} className="ml-auto" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
+      <DropdownMenuContent side="top" align="end" className="w-64">
+        <DropdownMenuLabel>Permission mode</DropdownMenuLabel>
+        {AGNI_RUNTIME_MODES.map((mode) => {
+          const resolved = resolveCompatibleRuntimeMode(mode.id, modeState);
+          const disabled = resolved.mode === null;
+          return (
+            <DropdownMenuItem
+              key={mode.id}
+              disabled={disabled}
+              onSelect={() => {
+                if (!resolved.mode) return;
+                void setAcpRuntimeMode(agent, mode.id);
+                runAcpAction(client, client.setMode(resolved.mode));
+              }}
+            >
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-[11px]">{mode.label}</span>
+                <span className="truncate text-[9.5px] text-muted-foreground">
+                  {disabled
+                    ? "Not supported by this agent"
+                    : resolved.changed && resolved.mode !== mode.id
+                      ? `${mode.description} (mapped to ${resolved.mode})`
+                      : mode.description}
+                </span>
+              </div>
+              {mode.id === activePolicy ? (
+                <HugeiconsIcon icon={Tick02Icon} className="ml-auto" />
+              ) : null}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -1033,7 +1254,13 @@ function ModelPicker({
   onSelect,
 }: {
   label: string;
-  options: { value: string; name: string }[];
+  options: {
+    value: string;
+    name: string;
+    description?: string;
+    groupId?: string;
+    groupName?: string;
+  }[];
   currentValue: string;
   onSelect: (value: string) => void;
 }) {
@@ -1047,9 +1274,19 @@ function ModelPicker({
   const needle = query.trim().toLowerCase();
   const filtered = needle
     ? options.filter((value) =>
-        `${value.name} ${value.value}`.toLowerCase().includes(needle),
+        `${value.name} ${value.value} ${value.groupName ?? ""} ${value.groupId ?? ""}`.toLowerCase().includes(needle),
       )
     : options;
+  const groups = groupConfigValuesByProvider(
+    filtered.map((v) => ({
+      value: v.value,
+      name: v.name,
+      ...(v.description ? { description: v.description } : {}),
+      ...(v.groupId ? { groupId: v.groupId } : {}),
+      ...(v.groupName ? { groupName: v.groupName } : {}),
+    })),
+  );
+  const showGroups = groups.length > 1;
   return (
     <Popover
       open={open}
@@ -1061,7 +1298,7 @@ function ModelPicker({
       <PopoverTrigger asChild>
         <button
           type="button"
-          title={label}
+          title={current ? `${current.name}` : label}
           className="max-w-40 truncate rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
         >
           {current?.name ?? label}
@@ -1089,6 +1326,43 @@ function ModelPicker({
             <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">
               No models found.
             </p>
+          ) : showGroups ? (
+            groups.map((group) => (
+              <div key={group.id || group.name || "ungrouped"}>
+                <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {formatProviderLabel(group.id, group.name)}
+                </div>
+                {group.values.map((value) => (
+                  <button
+                    key={value.value}
+                    type="button"
+                    onClick={() => {
+                      onSelect(value.value);
+                      setOpen(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent hover:text-accent-foreground",
+                      value.value === currentValue && "font-medium",
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {stripProviderPrefix(value.name, group.id, group.name)}
+                    </span>
+                    {value.description ? (
+                      <span className="ml-2 max-w-24 truncate text-[10px] text-muted-foreground">
+                        {value.description}
+                      </span>
+                    ) : null}
+                    {value.value === currentValue ? (
+                      <HugeiconsIcon
+                        icon={Tick02Icon}
+                        className="ml-auto shrink-0"
+                      />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ))
           ) : (
             filtered.map((value) => (
               <button
@@ -1104,6 +1378,11 @@ function ModelPicker({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{value.name}</span>
+                {value.description ? (
+                  <span className="ml-2 max-w-24 truncate text-[10px] text-muted-foreground">
+                    {value.description}
+                  </span>
+                ) : null}
                 {value.value === currentValue ? (
                   <HugeiconsIcon
                     icon={Tick02Icon}
@@ -1132,6 +1411,7 @@ function formatSessionTime(value: string | null): string {
 }
 
 function SessionActions({ sessionId }: { sessionId: string }) {
+  const client = useAcpClient();
   const capabilities = useAcpStore((state) => state.capabilities);
   if (
     !capabilities.sessionResume &&
@@ -1146,7 +1426,7 @@ function SessionActions({ sessionId }: { sessionId: string }) {
         <button
           type="button"
           title="Resume without replaying history"
-          onClick={() => runAcpAction(resumeAcpSession(sessionId))}
+          onClick={() => runAcpAction(client, client.resumeSession(sessionId))}
           className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
         >
           Resume
@@ -1156,7 +1436,7 @@ function SessionActions({ sessionId }: { sessionId: string }) {
         <button
           type="button"
           title="Fork this session into a new one"
-          onClick={() => runAcpAction(forkAcpSession(sessionId))}
+          onClick={() => runAcpAction(client, client.forkSession(sessionId))}
           className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
         >
           Fork
@@ -1166,7 +1446,7 @@ function SessionActions({ sessionId }: { sessionId: string }) {
         <button
           type="button"
           title="Delete session"
-          onClick={() => runAcpAction(deleteAcpSession(sessionId))}
+          onClick={() => runAcpAction(client, client.deleteSession(sessionId))}
           className="rounded px-1.5 py-1 text-[10px] text-destructive/80 hover:bg-destructive/10"
         >
           Delete
@@ -1183,6 +1463,7 @@ function SessionSwitcherDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const client = useAcpClient();
   const currentId = useAcpStore((state) => state.sessionId);
   const [sessions, setSessions] = useState<AcpSessionInfo[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -1196,7 +1477,8 @@ function SessionSwitcherDialog({
     setNextCursor(null);
     setLoadingMore(false);
     setQuery("");
-    void listAcpSessions()
+    void client
+      .listSessions()
       .then((page) => {
         if (cancelled) return;
         setSessions(page.sessions);
@@ -1204,18 +1486,19 @@ function SessionSwitcherDialog({
       })
       .catch((error) => {
         if (cancelled) return;
-        useAcpStore.setState({ rpcError: String(error) });
+        client.setLocal({ rpcError: String(error) });
         setSessions([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [client, open]);
 
   const loadMore = () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
-    void listAcpSessions(nextCursor)
+    void client
+      .listSessions(nextCursor)
       .then((page) => {
         setSessions((current) => {
           const existing = new Set(
@@ -1231,7 +1514,7 @@ function SessionSwitcherDialog({
         setNextCursor(page.nextCursor);
       })
       .catch((error) => {
-        useAcpStore.setState({ rpcError: String(error) });
+        client.setLocal({ rpcError: String(error) });
       })
       .finally(() => setLoadingMore(false));
   };
@@ -1285,7 +1568,7 @@ function SessionSwitcherDialog({
                 <button
                   type="button"
                   onClick={() => {
-                    runAcpAction(loadAcpSession(session.sessionId));
+                    runAcpAction(client, client.loadSession(session.sessionId));
                     onOpenChange(false);
                   }}
                   className="flex min-w-0 flex-1 flex-col gap-0.5 px-2.5 py-2 text-left"
@@ -1340,6 +1623,7 @@ function ExtraFoldersDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const client = useAcpClient();
   const directories = usePreferencesStore(
     (state) => state.acpAdditionalDirectories,
   );
@@ -1449,7 +1733,7 @@ function ExtraFoldersDialog({
             size="sm"
             className="h-8 shrink-0 gap-1.5 px-2.5 text-[11px]"
             disabled={!canRestart}
-            onClick={() => void restartAcp().catch(() => {})}
+            onClick={() => void client.restart().catch(() => {})}
           >
             <HugeiconsIcon icon={RefreshIcon} size={12} strokeWidth={2} />
             Restart agent
@@ -1463,10 +1747,15 @@ function ExtraFoldersDialog({
 function AcpComposer({
   agent,
   root,
+  initialPrompt,
+  onFanout,
 }: {
-  agent: AcpAgentId;
+  agent: string;
   root: string | null;
+  initialPrompt?: string | null;
+  onFanout?: (models: { model: string; prompt: string }[]) => void;
 }) {
+  const client = useAcpClient();
   const connection = useAcpStore((state) => state.connection);
   const isStreaming = useAcpStore((state) => state.isStreaming);
   const capabilities = useAcpStore((state) => state.capabilities);
@@ -1474,7 +1763,9 @@ function AcpComposer({
   const modeState = useAcpStore((state) => state.modeState);
   const modelState = useAcpStore((state) => state.modelState);
   const commands = useAcpStore((state) => state.commands);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialPrompt ?? "");
+  const [fanoutOpen, setFanoutOpen] = useState(false);
+  const [fanoutSelection, setFanoutSelection] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [atToken, setAtToken] = useState<AtToken | null>(null);
   const [atHighlight, setAtHighlight] = useState(0);
@@ -1483,8 +1774,32 @@ function AcpComposer({
   const [attachments, setAttachments] = useState<AcpAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const queue = usePromptQueue(`${agent}:${root ?? ""}`);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
+  const draining = useRef(false);
 
-  // Pick up an annotation draft (preview → agent) staged for this agent.
+  // Drain one queued prompt whenever the session is idle. "Run now" promotes
+  // an item to the front and cancels the current turn, so this effect picks it
+  // up as soon as the cancel settles.
+  useEffect(() => {
+    if (isStreaming || connection !== "ready" || sending || draining.current) {
+      return;
+    }
+    const next = queueRef.current.items[0];
+    if (!next) return;
+    draining.current = true;
+    const nextAttachments = [...queueRef.current.attachmentsFor(next.id)];
+    queueRef.current.take(next.id);
+    void client
+      .prompt({ text: next.text, attachments: nextAttachments })
+      .catch((error) => client.setLocal({ rpcError: String(error) }))
+      .finally(() => {
+        draining.current = false;
+      });
+  }, [client, connection, isStreaming, sending, queue.items.length]);
+
+  // Pick up an annotation draft (preview â†’ agent) staged for this agent.
   useEffect(() => {
     const draft = usePreviewAnnotateDraftStore.getState().consumeFor(agent);
     if (draft) {
@@ -1578,21 +1893,34 @@ function AcpComposer({
     ) {
       return;
     }
+    if (isStreaming) {
+      queue.add(
+        text || "Analyze the attached context.",
+        "queue",
+        canAttach ? attachments : [],
+      );
+      setInput("");
+      setAtToken(null);
+      setAttachments([]);
+      setMentions([]);
+      return;
+    }
     setInput("");
     setAtToken(null);
     setAttachments([]);
     setMentions([]);
     setSending(true);
     try {
-      await promptAcp({
+      await client.prompt({
         text: text || "Analyze the attached context.",
         mentions: usedMentions,
         attachments: canAttach ? attachments : [],
       });
+      recordPrompt(`${agent}:${root ?? ""}`, text);
     } catch (error) {
       setInput(text);
       setMentions(usedMentions);
-      useAcpStore.setState({ rpcError: String(error) });
+      client.setLocal({ rpcError: String(error) });
     } finally {
       setSending(false);
     }
@@ -1612,7 +1940,7 @@ function AcpComposer({
       },
     );
     if (nextFiles.length !== files.length) {
-      useAcpStore.setState({
+      client.setLocal({
         rpcError: "This agent does not accept that attachment type.",
       });
     }
@@ -1631,7 +1959,7 @@ function AcpComposer({
       totalBytes += entry.file.size;
     }
     if (accepted.length !== selected.length || nextFiles.length > available) {
-      useAcpStore.setState({
+      client.setLocal({
         rpcError: "Up to 4 attachments with a combined size of 6 MB.",
       });
     }
@@ -1641,7 +1969,7 @@ function AcpComposer({
       );
       setAttachments((current) => [...current, ...next]);
     } catch (error) {
-      useAcpStore.setState({ rpcError: String(error) });
+      client.setLocal({ rpcError: String(error) });
     } finally {
       if (imageInputRef.current) imageInputRef.current.value = "";
     }
@@ -1659,6 +1987,45 @@ function AcpComposer({
     fileHits.length > 0 ? Math.min(atHighlight, fileHits.length - 1) : 0;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      isStreaming &&
+      event.key === "Enter" &&
+      event.shiftKey &&
+      (event.metaKey || event.ctrlKey)
+    ) {
+      event.preventDefault();
+      const text = input.trim();
+      if (text || attachments.length > 0) {
+        queue.add(
+          text || "Analyze the attached context.",
+          "steer",
+          canAttach ? attachments : [],
+        );
+        setInput("");
+        setAtToken(null);
+        setAttachments([]);
+        setMentions([]);
+        client.cancel();
+      }
+      return;
+    }
+    if (
+      event.altKey &&
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      usePreferencesStore.getState().promptHistoryEnabled
+    ) {
+      const recalled = recallPrompt(
+        `${agent}:${root ?? ""}`,
+        input,
+        event.key === "ArrowUp" ? "prev" : "next",
+      );
+      if (recalled !== null) {
+        event.preventDefault();
+        setInput(recalled);
+        setAtToken(null);
+        return;
+      }
+    }
     if (atToken && fileHits.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -1721,7 +2088,7 @@ function AcpComposer({
     }
   };
 
-  const placeholder = `Ask ${acpAgent(agent).label} to work on something${
+  const placeholder = `Ask ${staticAgentLabel(agent)} to work on something${
     canMention ? "... (@ to reference a file)" : "..."
   }`;
   const attachmentLabel =
@@ -1798,122 +2165,239 @@ function AcpComposer({
     ) : undefined;
 
   return (
-    <AgentComposerFrame
-      suggestions={suggestions}
-      attachments={attachmentRow}
-      input={
-        <AgentComposerTextarea
-          ref={textareaRef}
-          value={input}
-          onChange={(event) => {
-            const value = event.target.value;
-            setInput(value);
-            setHighlightIndex(0);
-            setAtHighlight(0);
-            setAtToken(
-              canMention
-                ? detectAtToken(
-                    value,
-                    event.target.selectionStart ?? value.length,
-                  )
-                : null,
-            );
-          }}
-          onKeyDown={handleKeyDown}
-          onPaste={canAttach ? handleImagePaste : undefined}
-          placeholder={placeholder}
-          disabled={connection !== "ready"}
-        />
-      }
-      toolbar={
-        <>
-          {canAttach ? (
-            <>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept={attachmentAccept}
-                multiple
-                className="sr-only"
-                onChange={(event) => void addAttachments(event.target.files)}
-              />
-              <AgentComposerIconButton
-                label={attachmentLabel}
-                disabled={attachments.length >= MAX_ATTACHMENTS}
-                onClick={() => imageInputRef.current?.click()}
-              >
-                <HugeiconsIcon
-                  icon={AttachmentIcon}
-                  size={14}
-                  strokeWidth={1.8}
-                />
-              </AgentComposerIconButton>
-            </>
-          ) : null}
-          <span className="min-w-0 flex-1" />
-          {modelOption ? (
-            <ModelPicker
-              label={modelOption.name}
-              options={modelOption.options}
-              currentValue={String(modelOption.currentValue)}
-              onSelect={(value) =>
-                runAcpAction(setAcpConfigOption(modelOption.id, value))
-              }
-            />
-          ) : null}
-          {showModelSelect && modelState ? (
-            <ModelPicker
-              label="Model"
-              options={modelState.availableModels.map((model) => ({
-                value: model.modelId,
-                name: model.name,
-              }))}
-              currentValue={modelState.currentModelId ?? ""}
-              onSelect={(value) => runAcpAction(setAcpModel(value))}
-            />
-          ) : null}
-          {modelConfigOptions.map((option) =>
-            option.type === "boolean" ? (
-              <ConfigToggle key={option.id} option={option} />
-            ) : (
-              <ConfigSelect key={option.id} option={option} />
-            ),
-          )}
-          {thoughtOption ? <ConfigSelect option={thoughtOption} /> : null}
-          {modeOption ? <ConfigSelect option={modeOption} /> : null}
-          {showModeSelect && modeState ? (
-            <ModeSelect modeState={modeState} />
-          ) : null}
-          {otherOptions.map((option) =>
-            option.type === "boolean" ? (
-              <ConfigToggle key={option.id} option={option} />
-            ) : (
-              <ConfigSelect key={option.id} option={option} />
-            ),
-          )}
-          <AgentComposerSendButton
-            streaming={isStreaming}
-            disabled={
-              connection !== "ready" ||
-              (!isStreaming && !input.trim() && attachments.length === 0)
-            }
-            onClick={() => (isStreaming ? cancelAcp() : void submit())}
+    <>
+      <AgentQueuedRuns
+        items={queue.items}
+        onEdit={queue.update}
+        onRemove={queue.remove}
+        onRunNow={(id) => {
+          queue.promote(id);
+          if (isStreaming) client.cancel();
+        }}
+      />
+      <AgentComposerFrame
+        suggestions={suggestions}
+        attachments={attachmentRow}
+        input={
+          <AgentComposerTextarea
+            ref={textareaRef}
+            value={input}
+            onChange={(event) => {
+              const value = event.target.value;
+              setInput(value);
+              setHighlightIndex(0);
+              setAtHighlight(0);
+              setAtToken(
+                canMention
+                  ? detectAtToken(
+                      value,
+                      event.target.selectionStart ?? value.length,
+                    )
+                  : null,
+              );
+            }}
+            onKeyDown={handleKeyDown}
+            onPaste={canAttach ? handleImagePaste : undefined}
+            placeholder={placeholder}
+            disabled={connection !== "ready"}
           />
-        </>
-      }
-    />
+        }
+        toolbar={
+          <>
+            {canAttach ? (
+              <>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept={attachmentAccept}
+                  multiple
+                  className="sr-only"
+                  onChange={(event) => void addAttachments(event.target.files)}
+                />
+                <AgentComposerIconButton
+                  label={attachmentLabel}
+                  disabled={attachments.length >= MAX_ATTACHMENTS}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <HugeiconsIcon
+                    icon={AttachmentIcon}
+                    size={14}
+                    strokeWidth={1.8}
+                  />
+                </AgentComposerIconButton>
+              </>
+            ) : null}
+            <span className="min-w-0 flex-1" />
+            {modelOption ? (
+              <ModelPicker
+                label={modelOption.name}
+                options={modelOption.options}
+                currentValue={String(modelOption.currentValue)}
+                onSelect={(value) =>
+                  runAcpAction(
+                    client,
+                    client.setConfigOption(modelOption.id, value),
+                  )
+                }
+              />
+            ) : null}
+            {showModelSelect && modelState ? (
+              <ModelPicker
+                label="Model"
+                options={modelState.availableModels.map((model) => ({
+                  value: model.modelId,
+                  name: model.name,
+                  ...(model.description ? { description: model.description } : {}),
+                  ...(model.groupId ? { groupId: model.groupId } : {}),
+                  ...(model.groupName ? { groupName: model.groupName } : {}),
+                }))}
+                currentValue={modelState.currentModelId ?? ""}
+                onSelect={(value) =>
+                  runAcpAction(client, client.setModel(value))
+                }
+              />
+            ) : null}
+            {onFanout && modelState && modelState.availableModels.length > 1 ? (
+              <AgentComposerChip
+                title="Fan out: open a tab per model with this prompt"
+                onClick={() => {
+                  setFanoutSelection(
+                    modelState.availableModels.map((model) => model.modelId),
+                  );
+                  setFanoutOpen(true);
+                }}
+              >
+                Fan out
+              </AgentComposerChip>
+            ) : null}
+            {modelConfigOptions.map((option) =>
+              option.type === "boolean" ? (
+                <ConfigToggle key={option.id} option={option} />
+              ) : (
+                <ConfigSelect key={option.id} option={option} />
+              ),
+            )}
+            {thoughtOption ? <ConfigSelect option={thoughtOption} /> : null}
+            {modeOption ? <ConfigSelect option={modeOption} /> : null}
+            {showModeSelect && modeState ? (
+              <ModeSelect modeState={modeState} agent={agent} />
+            ) : null}
+            {otherOptions.map((option) =>
+              option.type === "boolean" ? (
+                <ConfigToggle key={option.id} option={option} />
+              ) : (
+                <ConfigSelect key={option.id} option={option} />
+              ),
+            )}
+            <AgentComposerSendButton
+              streaming={isStreaming}
+              disabled={
+                connection !== "ready" ||
+                (!isStreaming && !input.trim() && attachments.length === 0)
+              }
+              onClick={() => (isStreaming ? client.cancel() : void submit())}
+            />
+          </>
+        }
+      />
+      <Dialog open={fanoutOpen} onOpenChange={setFanoutOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Fan out to models</DialogTitle>
+            <DialogDescription>
+              Each selected model opens its own agent tab with this prompt
+              prefilled.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-64 space-y-0.5 overflow-y-auto">
+            {(modelState ? groupModelsByProvider(modelState.availableModels) : []).map(
+              (group) => (
+                <Fragment key={group.id || group.name || "ungrouped"}>
+                  {group.name ? (
+                    <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {formatProviderLabel(group.id, group.name)}
+                    </div>
+                  ) : null}
+                  {group.models.map((model) => (
+                    <label
+                      key={model.modelId}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-[11px] hover:bg-foreground/[0.04]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={fanoutSelection.includes(model.modelId)}
+                        onChange={(event) =>
+                          setFanoutSelection((current) =>
+                            event.target.checked
+                              ? [...current, model.modelId]
+                              : current.filter((id) => id !== model.modelId),
+                          )
+                        }
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {group.name
+                          ? stripProviderPrefix(model.name, group.id, group.name)
+                          : model.name}
+                      </span>
+                    </label>
+                  ))}
+                </Fragment>
+              ),
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px]"
+              onClick={() => setFanoutOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 text-[11px]"
+              disabled={fanoutSelection.length === 0}
+              onClick={() => {
+                onFanout?.(
+                  fanoutSelection.map((model) => ({
+                    model,
+                    prompt: input.trim(),
+                  })),
+                );
+                setFanoutOpen(false);
+              }}
+            >
+              Open {fanoutSelection.length} tabs
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-export function AcpPanel({
+function AcpPanelBody({
   agent,
   cwd,
   workspace,
-  agentPicker,
   onOpenFile,
+  onOpenDiff,
+  initialPrompt,
+  onFanout,
+  tabId,
+  active,
+  profileId,
+  onSwitchProfile,
+  resumeLatest,
+  layoutMode,
+  onToggleLayout,
 }: Props) {
-  const state = useAcpStore();
-  const descriptor = acpAgent(agent);
+  const client = useAcpClient();
+  const state = useAcpState();
+  const defaultLabel = staticAgentLabel(agent);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [extraFoldersOpen, setExtraFoldersOpen] = useState(false);
   const extraFolderCount = usePreferencesStore(
@@ -1921,14 +2405,50 @@ export function AcpPanel({
   );
 
   useEffect(() => {
-    void ensureAcpStarted(agent, cwd, workspace).catch(() => {});
-  }, [agent, cwd, workspace]);
+    void client.ensureStarted().catch(() => {});
+  }, [client]);
 
+  // A tab restored from the last launch reattaches to its newest session once
+  // the harness is ready. Runs once per mount; new tabs never auto-resume.
+  const resumeAttempted = useRef(false);
   useEffect(() => {
-    return () => {
-      void stopAcp();
-    };
-  }, []);
+    if (!resumeLatest || resumeAttempted.current) return;
+    if (state.connection !== "ready") return;
+    resumeAttempted.current = true;
+    void (async () => {
+      try {
+        if (!state.capabilities.sessionList) return;
+        const page = await client.listSessions();
+        const latest = [...page.sessions].sort((a, b) =>
+          (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
+        )[0];
+        if (!latest) return;
+        if (state.capabilities.sessionResume) {
+          await client.resumeSession(latest.sessionId);
+        } else if (state.capabilities.loadSession) {
+          await client.loadSession(latest.sessionId);
+        }
+      } catch {
+        // Keep the fresh session the spawn already created.
+      }
+    })();
+  }, [
+    client,
+    resumeLatest,
+    state.capabilities.loadSession,
+    state.capabilities.sessionList,
+    state.capabilities.sessionResume,
+    state.connection,
+  ]);
+
+  const wasStreaming = useRef(false);
+  const soundsEnabled = usePreferencesStore((s) => s.promptSounds !== "off");
+  useEffect(() => {
+    if (wasStreaming.current && !state.isStreaming) {
+      playCompletionSound(soundsEnabled);
+    }
+    wasStreaming.current = state.isStreaming;
+  }, [soundsEnabled, state.isStreaming]);
 
   const items = useMemo(() => {
     const messages = state.messages.map((message) => ({
@@ -1944,6 +2464,36 @@ export function AcpPanel({
     return [...messages, ...tools].sort((a, b) => a.sequence - b.sequence);
   }, [state.messages, state.tools]);
 
+  const timeline = useMemo(
+    () => groupToolRuns(items, (tool) => tool.kind),
+    [items],
+  );
+  const turnsByEnd = useMemo(() => {
+    const map = new Map<number, ReturnType<typeof acpTurnFiles>[number]>();
+    for (const turn of acpTurnFiles(state.messages, state.tools)) {
+      map.set(turn.endSequence, turn);
+    }
+    return map;
+  }, [state.messages, state.tools]);
+
+  const minimap = useMemo(
+    () =>
+      minimapMarkers(
+        timeline.map((item) =>
+          item.kind === "message"
+            ? { tone: item.message.role === "user" ? "user" : "agent" }
+            : {
+                tone: "tool",
+                error:
+                  item.kind === "tool"
+                    ? item.tool.status === "failed"
+                    : item.status === "error",
+              },
+        ),
+      ),
+    [timeline],
+  );
+
   const unavailable =
     state.connection === "error" ||
     state.connection === "exited" ||
@@ -1958,7 +2508,7 @@ export function AcpPanel({
   const switching = state.connection === "starting" || !configMatches;
   const cwdLabel = cwd ? baseName(cwd) : null;
   const agentLabel =
-    state.agentInfo.title ?? state.agentInfo.name ?? descriptor.label;
+    state.agentInfo.title ?? state.agentInfo.name ?? defaultLabel;
   const usageCost = formatCost(
     state.usage?.cost?.amount,
     state.usage?.cost?.currency,
@@ -1968,9 +2518,9 @@ export function AcpPanel({
         state.usage.size > 0
           ? formatTokens(state.usage.used, state.usage.size)
           : `${formatCount(state.usage.used)} tokens`
-      }${usageCost ? ` · ${usageCost}` : ""}`
+      }${usageCost ? ` Â· ${usageCost}` : ""}`
     : null;
-  const meta = [cwdLabel, usageText].filter(Boolean).join(" · ") || null;
+  const meta = [cwdLabel, usageText].filter(Boolean).join(" Â· ") || null;
 
   const runStatus: AgentRunStatus =
     state.connection === "stopped"
@@ -1981,14 +2531,33 @@ export function AcpPanel({
           ? "starting"
           : state.sessionState === "requires_action"
             ? "waiting"
-            : state.isStreaming
-              ? "working"
-              : "ready";
+            : state.lastStopReason === "error"
+              ? "error"
+              : state.isStreaming
+                ? "working"
+                : "ready";
+
+  useEffect(() => {
+    if (tabId === undefined) return;
+    reportAgentTabStatus({
+      tabId,
+      agent: defaultLabel,
+      status: tabStatusFromRun(runStatus),
+      active: active ?? true,
+    });
+  }, [active, defaultLabel, runStatus, tabId]);
+
+  useEffect(
+    () => () => {
+      if (tabId !== undefined) forgetAgentTab(tabId);
+    },
+    [tabId],
+  );
 
   let subtitle = state.sessionTitle ?? agentLabel;
   let subtitleTone: AgentSubtitleTone = "default";
   if (switching) {
-    subtitle = `Starting ${descriptor.label}`;
+    subtitle = `Starting ${defaultLabel}`;
   } else if (state.sessionState === "requires_action") {
     subtitle = "Waiting for your input";
     subtitleTone = "primary";
@@ -2017,15 +2586,36 @@ export function AcpPanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <AgentHeader
-        picker={agentPicker}
         mark={<AgentMark agent={agent} size={14} />}
-        label={descriptor.label}
+        label={defaultLabel}
+        chips={
+          <AgentProfileChip
+            agent={agent}
+            profileId={profileId}
+            onSwitchProfile={onSwitchProfile}
+          />
+        }
         status={runStatus}
         subtitle={subtitle}
         subtitleTone={subtitleTone}
         meta={meta}
         actions={
           <>
+            <AgentIconButton
+              label={
+                layoutMode === "focus"
+                  ? "Dock agent on the right"
+                  : "Full screen agent"
+              }
+              onClick={onToggleLayout}
+            >
+              <HugeiconsIcon
+                icon={
+                  layoutMode === "focus" ? PanelRightIcon : MaximizeScreenIcon
+                }
+                size={15}
+              />
+            </AgentIconButton>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <AgentIconButton label="Agent session menu">
@@ -2033,7 +2623,9 @@ export function AcpPanel({
                 </AgentIconButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onSelect={() => runAcpAction(newAcpSession())}>
+                <DropdownMenuItem
+                  onSelect={() => runAcpAction(client, client.newSession())}
+                >
                   <HugeiconsIcon icon={Add01Icon} />
                   New session
                 </DropdownMenuItem>
@@ -2048,7 +2640,9 @@ export function AcpPanel({
                 {state.authMethods.map((method) => (
                   <DropdownMenuItem
                     key={method.methodId}
-                    onSelect={() => runAcpAction(loginAcp(method.methodId))}
+                    onSelect={() =>
+                      runAcpAction(client, client.login(method.methodId))
+                    }
                   >
                     Sign in: {method.name}
                   </DropdownMenuItem>
@@ -2056,7 +2650,9 @@ export function AcpPanel({
                 {(state.protocolVersion === 2 ||
                   state.capabilities.authLogout) &&
                 state.authMethods.length > 0 ? (
-                  <DropdownMenuItem onSelect={() => runAcpAction(logoutAcp())}>
+                  <DropdownMenuItem
+                    onSelect={() => runAcpAction(client, client.logout())}
+                  >
                     Sign out
                   </DropdownMenuItem>
                 ) : null}
@@ -2064,12 +2660,16 @@ export function AcpPanel({
                   Extra folders
                   {extraFolderCount > 0 ? ` (${extraFolderCount})` : ""}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => runAcpAction(restartAcp())}>
+                <DropdownMenuItem
+                  onSelect={() => runAcpAction(client, client.restart())}
+                >
                   <HugeiconsIcon icon={RefreshIcon} />
                   Restart
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => runAcpAction(stopAcp())}>
+                <DropdownMenuItem
+                  onSelect={() => runAcpAction(client, client.stop())}
+                >
                   <HugeiconsIcon icon={PowerIcon} />
                   Stop
                 </DropdownMenuItem>
@@ -2079,7 +2679,15 @@ export function AcpPanel({
         }
       />
 
-      <AgentConversation>
+      <AgentConversation
+        busy={state.isStreaming}
+        minimap={(controls) => (
+          <AgentTimelineMinimap
+            markers={minimap}
+            onJump={controls.jumpToFraction}
+          />
+        )}
+      >
         {switching ? (
           <div className="flex flex-1 items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <HugeiconsIcon
@@ -2087,15 +2695,15 @@ export function AcpPanel({
               size={14}
               className="animate-spin"
             />
-            Starting {descriptor.label}
+            Starting {defaultLabel}
           </div>
         ) : unavailable ? (
           <AgentEmptyState
             mark={<AgentMark agent={agent} size={24} />}
             title={
               state.connection === "stopped"
-                ? `${descriptor.label} stopped`
-                : `${descriptor.label} is unavailable`
+                ? `${defaultLabel} stopped`
+                : `${defaultLabel} is unavailable`
             }
             hint={
               state.connection === "stopped"
@@ -2105,34 +2713,73 @@ export function AcpPanel({
           >
             <button
               type="button"
-              onClick={() => runAcpAction(restartAcp())}
+              onClick={() => runAcpAction(client, client.restart())}
               className="mt-3 rounded-md border border-border px-3 py-1.5 text-[11px] transition-colors hover:bg-foreground/[0.05]"
             >
               {state.connection === "stopped"
-                ? `Start ${descriptor.label}`
+                ? `Start ${defaultLabel}`
                 : "Try again"}
             </button>
           </AgentEmptyState>
         ) : empty ? (
           <AgentEmptyState
             mark={<AgentMark agent={agent} size={30} />}
-            title={`Ask ${descriptor.label} to work on something`}
+            title={`Ask ${defaultLabel} to work on something`}
             hint="Mention files with @ and press Enter to send."
           />
         ) : (
           <div className="space-y-4">
-            {items.map((item) =>
-              item.kind === "message" ? (
-                <Message key={item.message.id} message={item.message} />
-              ) : (
-                <ToolRow
-                  key={item.tool.id}
-                  tool={item.tool}
-                  cwd={cwd}
-                  onOpenPath={onOpenFile}
-                />
-              ),
-            )}
+            {timeline.map((item) => {
+              const key =
+                item.kind === "message"
+                  ? item.message.id
+                  : item.kind === "tool"
+                    ? item.tool.id
+                    : item.id;
+              const turn = turnsByEnd.get(item.sequence);
+              return (
+                <Fragment key={key}>
+                  {item.kind === "message" ? (
+                    <Message
+                      message={item.message}
+                      streaming={
+                        state.isStreaming &&
+                        item.message.role === "agent" &&
+                        item.message.id ===
+                          state.messages[state.messages.length - 1]?.id
+                      }
+                    />
+                  ) : item.kind === "tool" ? (
+                    <ToolRow
+                      tool={item.tool}
+                      cwd={cwd}
+                      onOpenPath={onOpenFile}
+                    />
+                  ) : (
+                    <AgentToolGroup
+                      label={item.label}
+                      status={item.status}
+                      count={item.tools.length}
+                    >
+                      {item.tools.map((tool) => (
+                        <ToolRow
+                          key={tool.id}
+                          tool={tool}
+                          cwd={cwd}
+                          onOpenPath={onOpenFile}
+                        />
+                      ))}
+                    </AgentToolGroup>
+                  )}
+                  {turn ? (
+                    <AgentChangedFilesCard
+                      files={turn.files}
+                      onOpenDiff={onOpenDiff}
+                    />
+                  ) : null}
+                </Fragment>
+              );
+            })}
           </div>
         )}
       </AgentConversation>
@@ -2140,13 +2787,18 @@ export function AcpPanel({
       {state.rpcError ? (
         <AgentError
           message={state.rpcError}
-          onDismiss={() => useAcpStore.setState({ rpcError: null })}
+          onDismiss={() => client.setLocal({ rpcError: null })}
         />
       ) : null}
       <ElicitationPrompt />
       <PermissionPrompt />
       <PlanList />
-      <AcpComposer agent={agent} root={cwd} />
+      <AcpComposer
+        agent={agent}
+        root={cwd}
+        initialPrompt={initialPrompt}
+        onFanout={onFanout}
+      />
       <SessionSwitcherDialog
         open={sessionSwitcherOpen}
         onOpenChange={setSessionSwitcherOpen}
@@ -2156,5 +2808,80 @@ export function AcpPanel({
         onOpenChange={setExtraFoldersOpen}
       />
     </div>
+  );
+}
+
+/**
+ * Each panel owns one session, keyed by agent + cwd + workspace, so multiple
+ * agent tabs can run concurrently. The provider supplies the store; the body
+ * is a plain consumer.
+ */
+export function AcpPanel(props: Props) {
+  const installed = usePreferencesStore((state) => state.installedAcpAgents);
+  const profiles = usePreferencesStore((state) => state.agentProfiles);
+  const profileDefaults = usePreferencesStore(
+    (state) => state.agentDefaultProfile,
+  );
+  const profile = useMemo(() => {
+    if (props.profileId) {
+      const found = profiles.find((entry) => entry.id === props.profileId);
+      if (found) return found;
+    }
+    return defaultProfileFor(profiles, props.agent, profileDefaults);
+  }, [profileDefaults, profiles, props.agent, props.profileId]);
+  const storedLaunch =
+    installed.find((agent) => agent.id === props.agent) ?? null;
+  const devLaunch =
+    import.meta.env.DEV && props.agent === "dev-replay"
+      ? {
+          program: "node",
+          args: ["scripts/dev-replay-agent.mjs"],
+          env: [],
+          managed: false,
+        }
+      : null;
+  const customProfileLaunch = profile ? profileCustomLaunch(profile) : null;
+  const launch = customProfileLaunch
+    ? {
+        program: customProfileLaunch.program,
+        args: customProfileLaunch.args,
+        env: [],
+        managed: false,
+        custom: true,
+      }
+    : (devLaunch ??
+      (storedLaunch
+        ? {
+            program: storedLaunch.program,
+            args: storedLaunch.args,
+            env: storedLaunch.env,
+            managed: storedLaunch.managed,
+          }
+        : null));
+  const config = useMemo<AcpSessionConfig>(
+    () => ({
+      agent: props.agent,
+      cwd: props.cwd ?? "",
+      workspace: props.workspace,
+      launch: launch ?? undefined,
+      initialModel: props.initialModel ?? null,
+      profileId: profile?.id ?? null,
+      profileEnv: profile ? profileEnvWire(profile) : undefined,
+      profileArgs: profile ? profileExtraArgs(profile) : undefined,
+      profileEnvError: managedProfileEnvError(profile),
+    }),
+    [
+      profile,
+      props.agent,
+      props.cwd,
+      props.initialModel,
+      props.workspace,
+      launch,
+    ],
+  );
+  return (
+    <AcpSessionProvider config={config}>
+      <AcpPanelBody {...props} />
+    </AcpSessionProvider>
   );
 }
