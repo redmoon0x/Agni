@@ -63,6 +63,7 @@ pub async fn pi_start(
     registry: tauri::State<'_, WorkspaceRegistry>,
     cwd: Option<String>,
     workspace: Option<WorkspaceEnv>,
+    profile_env: Option<Vec<crate::modules::acp::AcpEnvVar>>,
     on_event: Channel<PiEvent>,
 ) -> Result<PiStartResult, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
@@ -82,6 +83,12 @@ pub async fn pi_start(
     }
 
     let mut command = build_pi_command(cwd.as_deref(), &workspace)?;
+    if let Some(env) = profile_env.as_deref() {
+        crate::modules::acp::validate_managed_env(env)?;
+        for (name, value) in crate::modules::acp::resolve_env(env)? {
+            command.env(name, value);
+        }
+    }
     if let (WorkspaceEnv::Local, Some(path)) = (&workspace, authorized_cwd) {
         command.current_dir(path);
     }

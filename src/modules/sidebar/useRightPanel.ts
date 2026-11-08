@@ -28,6 +28,7 @@ function readRightPanelWidth(): number {
 export function useRightPanel() {
   const rightPanelRef = useRef<PanelImperativeHandle | null>(null);
   const rightPanelWidthRef = useRef(readRightPanelWidth());
+  const focusedWidthRef = useRef<number | null>(null);
   const widthWriteTimerRef = useRef(0);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
@@ -44,23 +45,39 @@ export function useRightPanel() {
   }, []);
 
   const openRightPanel = useCallback(() => {
+    // Mounting may lag behind the mode switch; record the intent so the panel
+    // expands as soon as its handle exists.
+    setRightPanelOpen(true);
     const panel = rightPanelRef.current;
     if (!panel || panel.getSize().asPercentage > 0) return;
     panel.resize(`${rightPanelWidthRef.current}px`);
-    setRightPanelOpen(true);
+  }, []);
+
+  const focusRightPanel = useCallback(() => {
+    focusedWidthRef.current ??= rightPanelWidthRef.current;
+    rightPanelRef.current?.resize("100%");
+  }, []);
+
+  const restoreRightPanelWidth = useCallback(() => {
+    const width = focusedWidthRef.current ?? rightPanelWidthRef.current;
+    rightPanelWidthRef.current = width;
+    rightPanelRef.current?.resize(`${width}px`);
+    requestAnimationFrame(() => {
+      focusedWidthRef.current = null;
+    });
   }, []);
 
   const closeRightPanel = useCallback(() => {
+    focusedWidthRef.current = null;
     const panel = rightPanelRef.current;
-    if (!panel || panel.getSize().asPercentage <= 0) return;
-    panel.collapse();
+    if (panel && panel.getSize().asPercentage > 0) panel.collapse();
     setRightPanelOpen(false);
   }, []);
 
   const handleRightPanelResize = useCallback((width: number) => {
     const open = width > 0;
     setRightPanelOpen((current) => (current === open ? current : open));
-    if (!open) return;
+    if (!open || focusedWidthRef.current !== null) return;
     const next = clampRightPanelWidth(width);
     rightPanelWidthRef.current = next;
     if (widthWriteTimerRef.current) {
@@ -92,6 +109,8 @@ export function useRightPanel() {
     rightPanelOpen,
     toggleRightPanel,
     openRightPanel,
+    focusRightPanel,
+    restoreRightPanelWidth,
     closeRightPanel,
     handleRightPanelResize,
   };

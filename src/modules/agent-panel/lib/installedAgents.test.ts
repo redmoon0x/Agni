@@ -31,6 +31,7 @@ describe("orderKnownAgents", () => {
       "commandcode",
       "claude",
       "hermes",
+      "omp",
     ]);
   });
 });

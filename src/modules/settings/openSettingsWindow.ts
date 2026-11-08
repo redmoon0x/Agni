@@ -4,7 +4,9 @@ export type SettingsTab =
   | "general"
   | "themes"
   | "pets"
+  | "providers"
   | "acp"
+  | "usage"
   | "shortcuts"
   | "about";
 

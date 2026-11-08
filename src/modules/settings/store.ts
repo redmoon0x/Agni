@@ -1,10 +1,30 @@
-import { ACP_AGENTS, type AcpAgentId } from "@/modules/acp-agent/lib/agent";
-import { parseDirectoryList } from "@/modules/acp-agent/lifecycle";
-import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LazyStore } from "@tauri-apps/plugin-store";
+import { isAcpAgentId } from "@/modules/acp-agent/lib/agent";
+import {
+  type AgniRuntimeMode,
+  parseAgniRuntimeMode,
+} from "@/modules/acp-agent/lib/runtimeModes";
+import { parseDirectoryList } from "@/modules/acp-agent/lifecycle";
+import {
+  type InstalledAcpAgent,
+  parseInstalledAcpAgents,
+} from "@/modules/acp-agent/registry";
+import {
+  type AgentSessionsPref,
+  EMPTY_AGENT_SESSIONS,
+  parseAgentSessions,
+} from "@/modules/agent-panel/lib/agentSessions";
+import {
+  type AgentProfile,
+  parseAgentProfiles,
+} from "@/modules/agent-panel/lib/profile";
+import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 
 export type ThemePref = "system" | "light" | "dark";
+
+/** Agents either fill the workspace (T3-style) or dock to the right. */
+export type AgentPanelMode = "focus" | "dock";
 
 export const DEFAULT_THEME_ID = "agni-default";
 
@@ -38,16 +58,41 @@ export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
   "xcode-light": "Xcode Light",
 };
 
-export type AgentId = "pi" | AcpAgentId;
+export type AgentId = string;
+
+const REGISTRY_AGENT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export type PromptSoundPref = "off" | "sound" | "both";
+
+export function parsePromptSound(value: unknown): PromptSoundPref | null {
+  return value === "off" || value === "sound" || value === "both"
+    ? value
+    : null;
+}
+
+function parseRuntimeModeMap(value: unknown): Record<string, AgniRuntimeMode> {
+  if (typeof value !== "object" || value === null) return {};
+  const out: Record<string, AgniRuntimeMode> = {};
+  for (const [key, mode] of Object.entries(value)) {
+    const parsed = parseAgniRuntimeMode(mode);
+    if (parsed) out[key] = parsed;
+  }
+  return out;
+}
+
+function parseStringMap(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null) return {};
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string" && entry) out[key] = entry;
+  }
+  return out;
+}
 
 export function parseAgentId(value: unknown): AgentId | null {
   if (value === "pi") return value;
-  if (
-    typeof value === "string" &&
-    Object.prototype.hasOwnProperty.call(ACP_AGENTS, value)
-  ) {
-    return value as AcpAgentId;
-  }
+  if (isAcpAgentId(value)) return value;
+  if (typeof value === "string" && REGISTRY_AGENT_ID.test(value)) return value;
   return null;
 }
 
@@ -78,6 +123,17 @@ export type Preferences = {
   editorAutoSaveDelay: number;
   editorFormatOnSave: boolean;
   editorInlineDiagnostics: boolean;
+  acpRuntimeMode: Record<string, AgniRuntimeMode>;
+  installedAcpAgents: InstalledAcpAgent[];
+  agentProfiles: AgentProfile[];
+  /** Default profile id per agent. */
+  agentDefaultProfile: Record<string, string>;
+  /** Open agent sessions, restored on launch. */
+  agentSessions: AgentSessionsPref;
+  /** Full-workspace agent surface or the compact right dock. */
+  agentPanelMode: AgentPanelMode;
+  promptSounds: PromptSoundPref;
+  promptHistoryEnabled: boolean;
 };
 
 const STORE_PATH = "agni-settings.json";
@@ -108,6 +164,14 @@ const KEY_EDITOR_AUTO_SAVE = "editorAutoSave";
 const KEY_EDITOR_AUTO_SAVE_DELAY = "editorAutoSaveDelay";
 const KEY_EDITOR_FORMAT_ON_SAVE = "editorFormatOnSave";
 const KEY_EDITOR_INLINE_DIAGNOSTICS = "editorInlineDiagnostics";
+const KEY_ACP_RUNTIME_MODE = "acpRuntimeMode";
+const KEY_INSTALLED_ACP_AGENTS = "installedAcpAgents";
+const KEY_AGENT_PROFILES = "agentProfiles";
+const KEY_AGENT_DEFAULT_PROFILE = "agentDefaultProfile";
+const KEY_AGENT_SESSIONS = "agentSessions";
+const KEY_AGENT_PANEL_MODE = "agentPanelMode";
+const KEY_PROMPT_SOUNDS = "promptSounds";
+const KEY_PROMPT_HISTORY_ENABLED = "promptHistoryEnabled";
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
 export const TERMINAL_FONT_SIZE_MIN = 8;
@@ -151,6 +215,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorAutoSaveDelay: 1000,
   editorFormatOnSave: false,
   editorInlineDiagnostics: false,
+  acpRuntimeMode: {},
+  installedAcpAgents: [],
+  agentProfiles: [],
+  agentDefaultProfile: {},
+  agentSessions: EMPTY_AGENT_SESSIONS,
+  agentPanelMode: "focus",
+  promptSounds: "off",
+  promptHistoryEnabled: true,
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
@@ -234,6 +306,23 @@ export async function loadPreferences(): Promise<Preferences> {
     editorInlineDiagnostics:
       get<boolean>(KEY_EDITOR_INLINE_DIAGNOSTICS) ??
       DEFAULT_PREFERENCES.editorInlineDiagnostics,
+    acpRuntimeMode: parseRuntimeModeMap(get<unknown>(KEY_ACP_RUNTIME_MODE)),
+    installedAcpAgents: parseInstalledAcpAgents(
+      get<unknown>(KEY_INSTALLED_ACP_AGENTS),
+    ),
+    agentProfiles: parseAgentProfiles(get<unknown>(KEY_AGENT_PROFILES)),
+    agentDefaultProfile: parseStringMap(
+      get<unknown>(KEY_AGENT_DEFAULT_PROFILE),
+    ),
+    agentSessions: parseAgentSessions(get<unknown>(KEY_AGENT_SESSIONS)),
+    agentPanelMode:
+      get<unknown>(KEY_AGENT_PANEL_MODE) === "dock" ? "dock" : "focus",
+    promptSounds:
+      parsePromptSound(get<unknown>(KEY_PROMPT_SOUNDS)) ??
+      DEFAULT_PREFERENCES.promptSounds,
+    promptHistoryEnabled:
+      get<boolean>(KEY_PROMPT_HISTORY_ENABLED) ??
+      DEFAULT_PREFERENCES.promptHistoryEnabled,
   };
 }
 
@@ -373,6 +462,57 @@ export async function setAcpAdditionalDirectories(
   await writePref(KEY_ACP_ADDITIONAL_DIRECTORIES, parseDirectoryList(value));
 }
 
+export async function setAcpRuntimeMode(
+  agentId: string,
+  mode: AgniRuntimeMode,
+): Promise<void> {
+  const current = parseRuntimeModeMap(
+    await store.get<unknown>(KEY_ACP_RUNTIME_MODE),
+  );
+  await writePref(KEY_ACP_RUNTIME_MODE, { ...current, [agentId]: mode });
+}
+
+export async function setInstalledAcpAgents(
+  value: InstalledAcpAgent[],
+): Promise<void> {
+  await writePref(KEY_INSTALLED_ACP_AGENTS, parseInstalledAcpAgents(value));
+}
+
+export async function setAgentProfiles(value: AgentProfile[]): Promise<void> {
+  await writePref(KEY_AGENT_PROFILES, parseAgentProfiles(value));
+}
+
+export async function setAgentDefaultProfile(
+  agent: string,
+  profileId: string | null,
+): Promise<void> {
+  const current = parseStringMap(
+    await store.get<unknown>(KEY_AGENT_DEFAULT_PROFILE),
+  );
+  const next = { ...current };
+  if (profileId) next[agent] = profileId;
+  else delete next[agent];
+  await writePref(KEY_AGENT_DEFAULT_PROFILE, next);
+}
+
+export async function setAgentSessions(
+  value: AgentSessionsPref,
+): Promise<void> {
+  await writePref(KEY_AGENT_SESSIONS, parseAgentSessions(value));
+}
+
+export async function setAgentPanelMode(value: AgentPanelMode): Promise<void> {
+  await writePref(KEY_AGENT_PANEL_MODE, value === "dock" ? "dock" : "focus");
+}
+
+export async function setPromptSounds(value: PromptSoundPref): Promise<void> {
+  await writePref(KEY_PROMPT_SOUNDS, value);
+}
+
+export async function setPromptHistoryEnabled(value: boolean): Promise<void> {
+  await writePref(KEY_PROMPT_HISTORY_ENABLED, value);
+}
+
 export async function setPetId(value: string | null): Promise<void> {
   await writePref(KEY_PET_ID, value);
 }
@@ -419,6 +559,14 @@ export async function onPreferencesChange(
     [KEY_EDITOR_AUTO_SAVE_DELAY]: "editorAutoSaveDelay",
     [KEY_EDITOR_FORMAT_ON_SAVE]: "editorFormatOnSave",
     [KEY_EDITOR_INLINE_DIAGNOSTICS]: "editorInlineDiagnostics",
+    [KEY_ACP_RUNTIME_MODE]: "acpRuntimeMode",
+    [KEY_INSTALLED_ACP_AGENTS]: "installedAcpAgents",
+    [KEY_AGENT_PROFILES]: "agentProfiles",
+    [KEY_AGENT_DEFAULT_PROFILE]: "agentDefaultProfile",
+    [KEY_AGENT_SESSIONS]: "agentSessions",
+    [KEY_AGENT_PANEL_MODE]: "agentPanelMode",
+    [KEY_PROMPT_SOUNDS]: "promptSounds",
+    [KEY_PROMPT_HISTORY_ENABLED]: "promptHistoryEnabled",
   };
   const unsubLocal = await store.onChange<unknown>((key, value) => {
     const mapped = map[key];

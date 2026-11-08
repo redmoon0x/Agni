@@ -30,13 +30,36 @@ import {
   type SearchInlineHandle,
   type SearchTarget,
 } from "@/modules/header";
-import { AgentPanel } from "@/modules/agent-panel";
+import { AgentDock, AgentsSidebar } from "@/modules/agent-panel";
+import { useAgentTabStatus } from "@/modules/agent-panel/lib/agentTabStatus";
+import { forgetAgentTab } from "@/modules/agent-panel/lib/agentTabStatus";
+import { planAgentSessionRestore } from "@/modules/agent-panel/lib/agentSessions";
+import { useAgentStore } from "@/modules/agents/store/agentStore";
+import {
+  acpSessionKey,
+  disposeAcpSession,
+} from "@/modules/acp-agent/session/registry";
+import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
+import { stopPi } from "@/modules/pi-agent/store";
 import { PetOverlayBridge } from "@/modules/pi-agent/PetOverlayBridge";
+import {
+  registerTerminalDockOpener,
+  RUN_IN_DOCK_EVENT,
+  RUN_IN_DOCK_RESULT_EVENT,
+  runInDockTerminalLocal,
+} from "@/modules/terminal-dock/lib/dockBridge";
+import { emit, listen } from "@tauri-apps/api/event";
 import type { PreviewPaneHandle } from "@/modules/preview";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
 import { SearchPanel } from "@/modules/search";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
-import { setLastProjectRoot } from "@/modules/settings/store";
+import {
+  type AgentPanelMode,
+  setAgentPanelAgent,
+  setAgentPanelMode,
+  setAgentSessions,
+  setLastProjectRoot,
+} from "@/modules/settings/store";
 import {
   type ShortcutHandlers,
   type ShortcutId,
@@ -79,6 +102,9 @@ import {
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore } from "@/modules/workspace";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { agentLabel } from "@/modules/agent-panel/lib/installedAgents";
+import { defaultProfileFor } from "@/modules/agent-panel/lib/profile";
 import { CloseDialogs } from "./components/CloseDialogs";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { useTabCloseGuards } from "./hooks/useTabCloseGuards";
@@ -114,6 +140,39 @@ export default function App() {
   const dock = useTerminalDock(getLaunchDir() ?? undefined);
   const { dockRef, dockOpen, toggleDock, openDock, handleDockResize } =
     useTerminalDockPanel(true);
+
+  // Settings is a separate webview: it asks this window to host sign-in
+  // terminals. The opener makes sure the dock is expanded before writing.
+  useEffect(() => {
+    registerTerminalDockOpener(openDock);
+    return () => registerTerminalDockOpener(null);
+  }, [openDock]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<{ requestId: string; command: string }>(
+      RUN_IN_DOCK_EVENT,
+      (event) => {
+        void (async () => {
+          let ok = false;
+          try {
+            ok = await runInDockTerminalLocal(event.payload.command);
+          } catch {
+            ok = false;
+          }
+          await emit(RUN_IN_DOCK_RESULT_EVENT, {
+            requestId: event.payload.requestId,
+            ok,
+          });
+        })();
+      },
+    ).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   // Mirror `tabs` into a ref so callbacks scheduled with `setTimeout`
   // (e.g. cdInNewTab) read the latest pane state instead of a stale closure.
@@ -174,9 +233,10 @@ export default function App() {
   const {
     rightPanelRef,
     rightPanelOpen,
-    toggleRightPanel,
     openRightPanel,
     closeRightPanel,
+    focusRightPanel,
+    restoreRightPanelWidth,
     handleRightPanelResize,
   } = useRightPanel();
 
@@ -188,32 +248,173 @@ export default function App() {
   >(null);
 
   const activeTab = tabs.find((t) => t.id === activeId);
-  const isEditorTab = activeTab?.kind === "editor";
-  const isGitHistoryTab = activeTab?.kind === "git-history";
-  // The agent panel has a single global session -- only ever one live surface
-  // for it, so opening it as a full tab suppresses (and reclaims focus from) the
-  // side panel.
-  const agentTab = tabs.find((t) => t.kind === "agent");
-
-  const onNewAgent = useCallback(() => {
-    closeRightPanel();
-    newAgentTab();
-  }, [closeRightPanel, newAgentTab]);
-
-  const onToggleAgentPanel = useCallback(() => {
-    if (agentTab) {
-      setActiveId(agentTab.id);
-      return;
-    }
-    toggleRightPanel();
-  }, [agentTab, setActiveId, toggleRightPanel]);
+  const contentTabs = tabs.filter((tab) => tab.kind !== "agent");
+  const activeContentId = contentTabs.some((tab) => tab.id === activeId)
+    ? activeId
+    : (contentTabs[0]?.id ?? 0);
+  const activeContentTab = contentTabs.find((tab) => tab.id === activeContentId);
+  const isEditorTab = activeContentTab?.kind === "editor";
+  const isGitHistoryTab = activeContentTab?.kind === "git-history";
+  // Agent sessions live in the right dock; the centre holds content only.
+  const agentTabs = useMemo(
+    () => tabs.filter((tab) => tab.kind === "agent"),
+    [tabs],
+  );
+  const [activeAgentTabId, setActiveAgentTabId] = useState<number | null>(null);
+  const [restoredTabIds, setRestoredTabIds] = useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
+  const agentProfiles = usePreferencesStore((s) => s.agentProfiles);
+  const agentProfileDefaults = usePreferencesStore(
+    (s) => s.agentDefaultProfile,
+  );
+  const preferencesHydrated = usePreferencesStore((s) => s.hydrated);
+  const agentPanelMode = usePreferencesStore((s) => s.agentPanelMode);
+  const agentFocus = agentPanelMode === "focus";
+  // Only take the workspace when there is actually a session to show.
+  const agentSurface = agentFocus && agentTabs.length > 0;
+  const agentAttention = useAgentTabStatus(
+    (s) => Object.values(s.tabs).filter((entry) => entry.unread > 0).length,
+  );
 
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
 
   const { explorerRoot } = useWorkspaceCwd(dock.activeCwd, launchCwd ?? home);
 
-  useWindowTitle(activeTab, explorerRoot);
+  const handleNewAgentTab = useCallback(
+    (spec: Parameters<typeof newAgentTab>[0]) => {
+      // Pi is a single process; focus its existing tab instead of fighting it.
+      if (spec.agent === "pi") {
+        const existing = agentTabs.find((tab) => tab.agent === "pi");
+        if (existing) {
+          setActiveAgentTabId(existing.id);
+          openRightPanel();
+          return existing.id;
+        }
+      }
+      const profile = spec.profileId
+        ? (agentProfiles.find((entry) => entry.id === spec.profileId) ?? null)
+        : defaultProfileFor(agentProfiles, spec.agent, agentProfileDefaults);
+      const id = newAgentTab({
+        ...spec,
+        focus: false,
+        profileId: profile?.id ?? null,
+        title: agentLabel(spec.agent),
+      });
+      setActiveAgentTabId(id);
+      void setAgentPanelAgent(spec.agent);
+      openRightPanel();
+      return id;
+    },
+    [
+      agentProfileDefaults,
+      agentProfiles,
+      agentTabs,
+      newAgentTab,
+      openRightPanel,
+    ],
+  );
+
+  const revealAgentsView = useCallback(() => {
+    sidebarRef.current?.expand();
+    persistSidebarView("agents");
+  }, [persistSidebarView, sidebarRef]);
+
+  /** Opening content needs the editor back: dock the agent to the right. */
+  const revealWorkspace = useCallback(() => {
+    if (!agentSurface) return;
+    usePreferencesStore.setState({ agentPanelMode: "dock" });
+    void setAgentPanelMode("dock");
+    openRightPanel();
+  }, [agentSurface, openRightPanel]);
+
+  const toggleAgentLayout = useCallback(() => {
+    const next: AgentPanelMode = agentFocus ? "dock" : "focus";
+    usePreferencesStore.setState({ agentPanelMode: next });
+    void setAgentPanelMode(next);
+    if (next === "dock") openRightPanel();
+  }, [agentFocus, openRightPanel]);
+
+  const onNewAgent = useCallback(() => {
+    // The Agents list is the switcher; reveal it when the user asks for agents.
+    openRightPanel();
+    revealAgentsView();
+  }, [openRightPanel, revealAgentsView]);
+
+  const openAgentFromSidebar = useCallback(
+    (agent: string, profileId?: string | null) => {
+      // Keep the side-panel agent visible; this opens alongside it as a tab.
+      handleNewAgentTab({
+        agent,
+        cwd: explorerRoot,
+        workspace: workspaceEnv,
+        profileId,
+      });
+    },
+    [explorerRoot, handleNewAgentTab, workspaceEnv],
+  );
+
+  const onToggleTerminal = useCallback(() => {
+    // The terminal lives in the workspace; bring it back when it is hidden.
+    if (agentSurface) {
+      usePreferencesStore.setState({ agentPanelMode: "dock" });
+      void setAgentPanelMode("dock");
+      openRightPanel();
+      if (!dockOpen) toggleDock();
+      return;
+    }
+    toggleDock();
+  }, [agentSurface, dockOpen, openRightPanel, toggleDock]);
+
+  // Resize the same mounted panel instead of moving its session tree between
+  // surfaces. Unmounting it stops Pi and releases ACP processes.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (agentSurface) {
+        openRightPanel();
+        focusRightPanel();
+      } else if (rightPanelOpen) {
+        restoreRightPanelWidth();
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [agentSurface, focusRightPanel, openRightPanel, restoreRightPanelWidth, rightPanelOpen]);
+
+  const activateAgentTab = useCallback(
+    (id: number) => {
+      setActiveAgentTabId(id);
+      openRightPanel();
+      // Keep the header's agent icon in step with the active session.
+      const tab = agentTabs.find((entry) => entry.id === id);
+      if (tab) void setAgentPanelAgent(tab.agent);
+      // Opening the session acknowledges its bell entry and unread badge.
+      useAgentTabStatus.getState().clearUnread(id);
+      useAgentStore.getState().finish(-id);
+    },
+    [agentTabs, openRightPanel],
+  );
+
+  const stopAgentSession = useCallback(
+    (tab: (typeof agentTabs)[number]) => {
+      forgetAgentTab(tab.id);
+      if (tab.agent === "pi") {
+        void stopPi();
+        return;
+      }
+      void disposeAcpSession(
+        acpSessionKey({
+          agent: tab.agent as AcpAgentId,
+          cwd: tab.cwd ?? "",
+          workspace: tab.workspace,
+          profileId: tab.profileId,
+        }),
+      );
+    },
+    [],
+  );
+
+  useWindowTitle(activeContentTab, explorerRoot);
 
   // Remember the last project root so relaunching without an explicit CLI
   // dir (Start Menu, Dock, taskbar) resumes here instead of at home.
@@ -252,6 +453,128 @@ export default function App() {
     },
     [closeTab],
   );
+
+  const closeAgentTab = useCallback(
+    (id: number) => {
+      const tab = agentTabs.find((entry) => entry.id === id);
+      const remaining = agentTabs.filter((entry) => entry.id !== id);
+      if (tab) stopAgentSession(tab);
+      if (tab && remaining.length === 0) closeRightPanel();
+      disposeTab(id);
+      setActiveAgentTabId((current) =>
+        current === id
+          ? (remaining[remaining.length - 1]?.id ?? null)
+          : current,
+      );
+    },
+    [agentTabs, closeRightPanel, disposeTab, stopAgentSession],
+  );
+
+  /** Switch accounts by replacing this session tab (blocked mid-turn). */
+  const switchAgentProfile = useCallback(
+    (tab: (typeof agentTabs)[number], profileId: string) => {
+      if ((tab.profileId ?? null) === profileId) return;
+      const status =
+        useAgentTabStatus.getState().tabs[tab.id]?.status ?? "idle";
+      if (status === "working" || status === "waiting") {
+        toast(
+          "Wait for the current turn or stop the agent before switching accounts.",
+        );
+        return;
+      }
+      const id = handleNewAgentTab({
+        agent: tab.agent,
+        cwd: tab.cwd,
+        workspace: tab.workspace,
+        profileId,
+        initialModel: tab.initialModel ?? null,
+      });
+      if (id !== tab.id) closeAgentTab(tab.id);
+    },
+    [closeAgentTab, handleNewAgentTab],
+  );
+
+  // Keep the dock's active session valid as tabs open and close.
+  useEffect(() => {
+    if (agentTabs.length === 0) {
+      if (activeAgentTabId !== null) setActiveAgentTabId(null);
+      return;
+    }
+    if (!agentTabs.some((tab) => tab.id === activeAgentTabId)) {
+      setActiveAgentTabId(agentTabs[agentTabs.length - 1].id);
+    }
+  }, [activeAgentTabId, agentTabs]);
+
+  // Restore the agent sessions from the previous launch (once, after hydration).
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!preferencesHydrated || restoredRef.current) return;
+    restoredRef.current = true;
+    const saved = usePreferencesStore.getState().agentSessions;
+    if (saved.sessions.length === 0) return;
+    const profiles = usePreferencesStore.getState().agentProfiles;
+    const { records, dropped } = planAgentSessionRestore(saved, profiles);
+    if (records.length === 0) return;
+    const ids: number[] = [];
+    const restored = new Set<number>();
+    for (const record of records) {
+      const id = newAgentTab({
+        agent: record.agent,
+        cwd: record.cwd,
+        workspace: record.workspace,
+        profileId: record.profileId,
+        initialModel: record.initialModel,
+        focus: false,
+        title: agentLabel(record.agent),
+      });
+      ids.push(id);
+      restored.add(id);
+    }
+    setRestoredTabIds(restored);
+    const activeIndex = records.findIndex(
+      (record) => record.key === saved.activeKey,
+    );
+    setActiveAgentTabId(
+      ids[activeIndex >= 0 ? activeIndex : ids.length - 1] ?? null,
+    );
+    const activeRecord =
+      records[activeIndex >= 0 ? activeIndex : ids.length - 1];
+    if (activeRecord) void setAgentPanelAgent(activeRecord.agent);
+    openRightPanel();
+    revealAgentsView();
+    if (dropped > 0) {
+      toast(
+        `Restored ${records.length} agent session${
+          records.length === 1 ? "" : "s"
+        }; ${dropped} could not be restored.`,
+      );
+    }
+  }, [
+    newAgentTab,
+    openRightPanel,
+    revealAgentsView,
+    preferencesHydrated,
+  ]);
+
+  // Persist open agent sessions so the panel comes back after a restart.
+  useEffect(() => {
+    if (!preferencesHydrated || !restoredRef.current) return;
+    const timer = window.setTimeout(() => {
+      void setAgentSessions({
+        sessions: agentTabs.map((tab) => ({
+          key: tab.key,
+          agent: tab.agent,
+          profileId: tab.profileId ?? null,
+          cwd: tab.cwd,
+          workspace: tab.workspace,
+          initialModel: tab.initialModel ?? null,
+        })),
+        activeKey:
+          agentTabs.find((tab) => tab.id === activeAgentTabId)?.key ?? null,
+      }).catch(() => {});
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [preferencesHydrated, agentTabs, activeAgentTabId]);
 
   const {
     pendingCloseTab,
@@ -311,6 +634,7 @@ export default function App() {
   // clicked tab becomes primary. Any other tab just moves the primary slot.
   const handleSelectTab = useCallback(
     (id: number) => {
+      revealWorkspace();
       if (secondaryId !== null && id === secondaryId) {
         setActiveId(id);
         setSecondaryId(activeId);
@@ -318,7 +642,7 @@ export default function App() {
       }
       setActiveId(id);
     },
-    [secondaryId, activeId, setActiveId, setSecondaryId],
+    [revealWorkspace, secondaryId, activeId, setActiveId, setSecondaryId],
   );
 
   const sendCd = useCallback(
@@ -348,6 +672,7 @@ export default function App() {
 
   const handleOpenFile = useCallback(
     (path: string, pin?: boolean) => {
+      revealWorkspace();
       if (/\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i.test(path)) {
         newImageTab(path);
         return;
@@ -358,11 +683,12 @@ export default function App() {
       }
       openFileTab(path, pin ?? false);
     },
-    [openFileTab, newImageTab, newPdfTab],
+    [openFileTab, newImageTab, newPdfTab, revealWorkspace],
   );
 
   const handleOpenSearchResult = useCallback(
     (path: string, line: number) => {
+      revealWorkspace();
       const id = openFileTab(path, true);
       if (id == null) return;
       // ponytail: file content loads async (fs_read_file invoke), so the
@@ -377,7 +703,7 @@ export default function App() {
       };
       tryGoto();
     },
-    [openFileTab],
+    [openFileTab, revealWorkspace],
   );
 
   const handleAgentOpenFile = useCallback(
@@ -389,6 +715,35 @@ export default function App() {
       handleOpenFile(path, true);
     },
     [handleOpenFile, handleOpenSearchResult],
+  );
+
+  const handleAgentOpenDiff = useCallback(
+    (path: string) => {
+      if (!explorerRoot) return;
+      revealWorkspace();
+      openGitDiffTab({ path, repoRoot: explorerRoot, mode: "-" });
+    },
+    [explorerRoot, openGitDiffTab, revealWorkspace],
+  );
+
+  const handleAgentFanout = useCallback(
+    (spec: {
+      agent: string;
+      cwd: string | null;
+      workspace: typeof workspaceEnv;
+      models: { model: string; prompt: string }[];
+    }) => {
+      for (const entry of spec.models) {
+        handleNewAgentTab({
+          agent: spec.agent,
+          cwd: spec.cwd,
+          workspace: spec.workspace,
+          initialModel: entry.model,
+          initialPrompt: entry.prompt,
+        });
+      }
+    },
+    [handleNewAgentTab],
   );
 
   const handlePathRenamed = useCallback(
@@ -466,32 +821,38 @@ export default function App() {
 
   const openPreviewTab = useCallback(
     (url: string) => {
+      revealWorkspace();
       const id = newPreviewTab(url);
       if (!url) {
         setTimeout(() => previewRefs.current.get(id)?.focusAddressBar(), 0);
       }
       return id;
     },
-    [newPreviewTab],
+    [newPreviewTab, revealWorkspace],
   );
 
   const openHttpClient = useCallback(
-    (url = "") => newHttpClientTab(url),
-    [newHttpClientTab],
+    (url = "") => {
+      revealWorkspace();
+      return newHttpClientTab(url);
+    },
+    [newHttpClientTab, revealWorkspace],
   );
 
   const openMarkdownPreview = useCallback(
     (path: string) => {
+      revealWorkspace();
       newMarkdownTab(path);
     },
-    [newMarkdownTab],
+    [newMarkdownTab, revealWorkspace],
   );
 
   const openHtmlPreview = useCallback(
     (path: string) => {
+      revealWorkspace();
       newHtmlPreviewTab(path);
     },
-    [newHtmlPreviewTab],
+    [newHtmlPreviewTab, revealWorkspace],
   );
 
   const splitDock = useCallback(
@@ -665,10 +1026,19 @@ export default function App() {
 
   const onActivateAgent = useCallback(
     (leafId: number) => {
+      // Agent notifications use a negative leaf id; terminal ones are positive.
+      if (leafId < 0) {
+        const tabId = -leafId;
+        setActiveAgentTabId(tabId);
+        openRightPanel();
+        useAgentTabStatus.getState().clearUnread(tabId);
+        useAgentStore.getState().finish(leafId);
+        return;
+      }
       openDock();
       dock.focusPane(leafId);
     },
-    [openDock, dock],
+    [openDock, dock, openRightPanel],
   );
 
   const handleDockLeafExit = useCallback(
@@ -771,6 +1141,26 @@ export default function App() {
     ],
   );
 
+  const renderAgentDock = () => (
+    <ErrorBoundary label="Agent" inline>
+      <AgentDock
+        tabs={agentTabs}
+        activeId={activeAgentTabId}
+        visible={agentSurface || rightPanelOpen}
+        workspace={workspaceEnv}
+        resumeTabIds={restoredTabIds}
+        layoutMode={agentSurface ? "focus" : "dock"}
+        onToggleLayout={toggleAgentLayout}
+        onOpenFile={handleAgentOpenFile}
+        onOpenDiff={handleAgentOpenDiff}
+        onSwitchProfile={switchAgentProfile}
+        onFanout={handleAgentFanout}
+        onOpenAgent={openAgentFromSidebar}
+        onBrowseAgents={onNewAgent}
+      />
+    </ErrorBoundary>
+  );
+
   const activeCwd = dock.activeCwd;
 
   return (
@@ -779,8 +1169,8 @@ export default function App() {
         <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
           {!zenMode && (
             <Header
-              tabs={tabs}
-              activeId={activeId}
+              tabs={contentTabs}
+              activeId={activeContentId}
               onSelect={handleSelectTab}
               onNewPreview={() => openPreviewTab("")}
               onNewEditor={() => setNewEditorOpen(true)}
@@ -790,9 +1180,7 @@ export default function App() {
               onClose={handleClose}
               onPin={pinTab}
               onToggleSidebar={toggleSidebar}
-              onToggleAgentPanel={onToggleAgentPanel}
-              agentPanelOpen={rightPanelOpen || activeTab?.kind === "agent"}
-              onToggleDock={toggleDock}
+              onToggleDock={onToggleTerminal}
               dockOpen={dockOpen}
               onSplitDock={splitDock}
               canSplitDock={dock.paneCount < MAX_DOCK_PANES}
@@ -828,7 +1216,17 @@ export default function App() {
                       resetKey={sidebarView}
                       inline
                     >
-                      {sidebarView === "explorer" ? (
+                      {sidebarView === "agents" ? (
+                        <AgentsSidebar
+                          cwd={explorerRoot}
+                          workspace={workspaceEnv}
+                          agentTabs={agentTabs}
+                          activeTabId={activeAgentTabId}
+                          onActivateTab={activateAgentTab}
+                          onCloseTab={closeAgentTab}
+                          onOpenAgent={openAgentFromSidebar}
+                        />
+                      ) : sidebarView === "explorer" ? (
                         <FileExplorer
                           ref={explorerRef}
                           rootPath={explorerRoot}
@@ -849,7 +1247,10 @@ export default function App() {
                         <SourceControlPanel
                           open
                           sourceControl={sourceControl}
-                          onOpenDiff={openGitDiffTab}
+                          onOpenDiff={(input) => {
+                            revealWorkspace();
+                            openGitDiffTab(input);
+                          }}
                           onOpenGitGraph={openGitGraphFromContext}
                           onOpenFile={handleOpenFile}
                         />
@@ -860,20 +1261,27 @@ export default function App() {
                     activeView={sidebarView}
                     onSelectView={persistSidebarView}
                     changedCount={sourceControl.changedCount}
+                    agentAttention={agentAttention}
                   />
                 </div>
               </ResizablePanel>
               <ResizableHandle withHandle />
-              <ResizablePanel id="workspace" defaultSize="78%" minSize="30%">
+              <ResizablePanel id="workspace-area" defaultSize="78%" minSize="30%">
+                <ResizablePanelGroup orientation="horizontal" className="h-full">
+                  <ResizablePanel
+                    id="workspace"
+                    minSize={agentSurface ? "0%" : "30%"}
+                    className={agentSurface ? "invisible pointer-events-none" : undefined}
+                  >
                 <ResizablePanelGroup orientation="vertical" className="h-full">
                   <ResizablePanel id="editor-area" minSize="20%">
                     <div className="relative h-full min-h-0">
                       <ErrorBoundary label="Editor" resetKey={activeId} inline>
                         <WorkspaceSurface
-                          tabs={tabs}
-                          activeId={activeId}
+                          tabs={contentTabs}
+                          activeId={activeContentId}
                           secondaryId={secondaryId}
-                          activeTab={activeTab}
+                          activeTab={activeContentTab}
                           registerEditorHandle={registerEditorHandle}
                           onEditorDirtyChange={handleEditorDirty}
                           onEditorCloseTab={disposeTab}
@@ -882,9 +1290,6 @@ export default function App() {
                           onPreviewUrlChange={handlePreviewUrl}
                           onOpenCommitFile={openCommitFileDiffTab}
                           onGitHistorySearchHandle={setGitHistoryHandle}
-                          agentCwd={explorerRoot}
-                          agentWorkspace={workspaceEnv}
-                          onAgentOpenFile={handleAgentOpenFile}
                         />
                       </ErrorBoundary>
                     </div>
@@ -932,29 +1337,27 @@ export default function App() {
                     </div>
                   </ResizablePanel>
                 </ResizablePanelGroup>
-              </ResizablePanel>
-              {rightPanelOpen ? <ResizableHandle withHandle /> : null}
-              <ResizablePanel
-                id="pi-panel"
-                panelRef={rightPanelRef}
-                defaultSize="0px"
-                minSize={`${RIGHT_PANEL_MIN_WIDTH}px`}
-                maxSize={`${RIGHT_PANEL_MAX_WIDTH}px`}
-                collapsible
-                collapsedSize={0}
-                onResize={(size) => handleRightPanelResize(size.inPixels)}
-              >
-                <div className="h-full min-h-0 border-l border-border/60 bg-card">
-                  {rightPanelOpen && !agentTab ? (
-                    <ErrorBoundary label="Agent" inline>
-                      <AgentPanel
-                        cwd={explorerRoot}
-                        workspace={workspaceEnv}
-                        onOpenFile={handleAgentOpenFile}
-                      />
-                    </ErrorBoundary>
+                  </ResizablePanel>
+                  {!agentSurface && rightPanelOpen ? (
+                    <ResizableHandle withHandle />
                   ) : null}
-                </div>
+                  <ResizablePanel
+                    id="pi-panel"
+                    panelRef={rightPanelRef}
+                    defaultSize="0px"
+                    minSize={agentSurface ? "0%" : `${RIGHT_PANEL_MIN_WIDTH}px`}
+                    maxSize={agentSurface ? "100%" : `${RIGHT_PANEL_MAX_WIDTH}px`}
+                    collapsible
+                    collapsedSize={0}
+                    onResize={(size) => {
+                      if (!agentSurface) handleRightPanelResize(size.inPixels);
+                    }}
+                  >
+                    <div className="h-full min-h-0 border-l border-border/60 bg-card">
+                      {renderAgentDock()}
+                    </div>
+                  </ResizablePanel>
+                </ResizablePanelGroup>
               </ResizablePanel>
             </ResizablePanelGroup>
           </main>

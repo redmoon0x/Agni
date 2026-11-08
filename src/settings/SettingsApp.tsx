@@ -3,8 +3,10 @@ import {
   InformationCircleIcon,
   KeyboardIcon,
   PaintBoardIcon,
+  Robot01Icon,
   ServerStack03Icon,
   Settings01Icon,
+  ChartHistogramIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -19,8 +21,10 @@ import { AboutSection } from "./sections/AboutSection";
 import { AcpDiscoverySection } from "./sections/AcpDiscoverySection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { PetsSection } from "./sections/PetsSection";
+import { ProfilesSection } from "./sections/ProfilesSection";
 import { ShortcutsSection } from "./sections/ShortcutsSection";
 import { ThemesSection } from "./sections/ThemesSection";
+import { UsageSection } from "./sections/UsageSection";
 
 const TABS: {
   id: SettingsTab;
@@ -47,10 +51,22 @@ const TABS: {
     component: PetsSection,
   },
   {
+    id: "providers",
+    label: "Providers",
+    icon: Robot01Icon,
+    component: ProfilesSection,
+  },
+  {
     id: "acp",
     label: "ACP",
     icon: ServerStack03Icon,
     component: AcpDiscoverySection,
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    icon: ChartHistogramIcon,
+    component: UsageSection,
   },
   {
     id: "shortcuts",
@@ -70,7 +86,9 @@ const VALID_TABS: SettingsTab[] = [
   "general",
   "themes",
   "pets",
+  "providers",
   "acp",
+  "usage",
   "shortcuts",
   "about",
 ];
@@ -139,7 +157,9 @@ export function SettingsApp() {
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-7 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="mx-auto w-full max-w-160">
+        <div
+          className={`mx-auto w-full ${active === "usage" ? "max-w-240" : "max-w-160"}`}
+        >
           {ActiveSection && <ActiveSection />}
         </div>
       </main>

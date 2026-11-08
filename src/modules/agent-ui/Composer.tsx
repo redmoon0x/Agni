@@ -1,6 +1,13 @@
 import { ArrowUp02Icon, Square01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from "react";
+import {
+  type ButtonHTMLAttributes,
+  type ComponentProps,
+  type ReactNode,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { cn } from "@/lib/utils";
 
 export function AgentSuggestions({
@@ -62,7 +69,7 @@ export function AgentComposerFrame({
   hint?: string;
 }) {
   return (
-    <div className="relative shrink-0 px-2 pb-2">
+    <div className="relative mx-auto w-full max-w-[1120px] shrink-0 px-4 pb-3">
       {suggestions}
       <div className="rounded-xl border border-border/70 bg-background/70 shadow-sm transition-colors focus-within:border-ring/60">
         {attachments}
@@ -72,7 +79,7 @@ export function AgentComposerFrame({
         </div>
       </div>
       {hint ? (
-        <p className="mt-1 px-1 text-[9px] text-muted-foreground/50">{hint}</p>
+        <p className="mt-1 px-1 text-[11px] text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );
@@ -80,13 +87,40 @@ export function AgentComposerFrame({
 
 export function AgentComposerTextarea({
   className,
+  autoSize = true,
+  onInput,
+  ref,
   ...props
-}: ComponentProps<"textarea">) {
+}: ComponentProps<"textarea"> & { autoSize?: boolean }) {
+  const innerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const resize = useCallback(() => {
+    const element = innerRef.current;
+    if (!element || !autoSize) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(160, Math.max(64, element.scrollHeight))}px`;
+  }, [autoSize]);
+
+  useLayoutEffect(() => {
+    resize();
+  }, [resize, props.value]);
+
+  const assignRef = (node: HTMLTextAreaElement | null) => {
+    innerRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) (ref as { current: HTMLTextAreaElement | null }).current = node;
+  };
+
   return (
     <textarea
+      ref={assignRef}
       rows={3}
+      onInput={(event) => {
+        resize();
+        onInput?.(event);
+      }}
       className={cn(
-        "block max-h-40 min-h-16 w-full resize-none bg-transparent px-3 pt-3 text-[12px] leading-relaxed outline-none placeholder:text-muted-foreground/70 disabled:opacity-50",
+        "block max-h-40 min-h-16 w-full resize-none bg-transparent px-3 pt-3 text-[14px] leading-relaxed outline-none placeholder:text-muted-foreground/70 disabled:opacity-50",
         className,
       )}
       {...props}
@@ -103,7 +137,7 @@ export function AgentComposerChip({
     <button
       type="button"
       className={cn(
-        "max-w-40 truncate rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-40",
+        "max-w-40 truncate rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground disabled:opacity-40",
         className,
       )}
       {...props}

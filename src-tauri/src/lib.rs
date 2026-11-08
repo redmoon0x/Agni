@@ -1,7 +1,8 @@
 pub mod modules;
 
 use modules::{
-    acp, acp_terminal, agent, format, fs, git, http, pets, pi, pick_folder, pty, shell, workspace,
+    acp, acp_registry, acp_terminal, agent, format, fs, git, http, pets, pi, pick_folder,
+    profile_lock, profile_probe, profile_storage, pty, secrets, shell, usage, workspace,
 };
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -231,7 +232,23 @@ pub fn run() {
             acp::acp_send,
             acp::acp_stop,
             acp::acp_close_all,
+            acp::acp_sessions,
             acp::acp_registry_list,
+            acp::acp_agents,
+            acp::acp_start_managed,
+            acp::acp_start_custom,
+            acp_registry::acp_registry_install,
+            acp_registry::acp_registry_uninstall,
+            acp_registry::acp_registry_installed,
+            secrets::secret_set,
+            secrets::secret_delete,
+            secrets::secret_has,
+            secrets::secret_get,
+            profile_lock::profile_acquire,
+            profile_lock::profile_release,
+            profile_lock::profile_locks,
+            profile_probe::profile_account_probe,
+            profile_storage::ensure_profile_storage,
             acp_terminal::acp_terminal_create,
             acp_terminal::acp_terminal_output,
             acp_terminal::acp_terminal_wait_for_exit,
@@ -299,7 +316,10 @@ pub fn run() {
             agent::agent_enable_claude_hooks,
             agent::agent_claude_hooks_status,
             agent::agents_installed,
+            agent::home_dir,
+            usage::usage_local_report,
             pick_folder::pick_folder,
+            pick_folder::pick_file,
             get_launch_dir,
             open_settings_window,
             pet_overlay_show,

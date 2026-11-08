@@ -1,10 +1,12 @@
 import { create } from "zustand";
+import { resolveManagedProfilePaths } from "@/modules/agent-panel/lib/profileStorage";
 import {
   DEFAULT_PREFERENCES,
   loadPreferences,
   onPreferencesChange,
-  parseAgentId,
   type Preferences,
+  parseAgentId,
+  setAgentProfiles,
 } from "./store";
 
 type State = Preferences & {
@@ -53,7 +55,18 @@ export const usePreferencesStore = create<State>((set) => ({
     if (initialized) return;
     initialized = true;
     const prefs = await loadPreferences();
-    set({ ...prefs, hydrated: true });
+    // Profiles created before the storage command returned camelCase keys have
+    // no isolation directories, which quietly routes every session to the
+    // harness's default account. Resolve and persist them once.
+    const agentProfiles = await resolveManagedProfilePaths(prefs.agentProfiles);
+    set({ ...prefs, agentProfiles, hydrated: true });
+    if (
+      agentProfiles.some(
+        (profile, index) => profile !== prefs.agentProfiles[index],
+      )
+    ) {
+      await setAgentProfiles(agentProfiles).catch(() => {});
+    }
     mirrorBgFastPath(prefs.backgroundKind, prefs.backgroundImageId);
     void onPreferencesChange((key, value) => {
       const preference =

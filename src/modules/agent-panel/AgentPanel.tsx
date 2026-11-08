@@ -1,80 +1,66 @@
-import { type ReactNode, useEffect } from "react";
-import {
-  MoreHorizontalIcon,
-  Tick02Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { AgentIcon } from "@/modules/agent-panel/AgentIcon";
-import {
-  invalidateAgentAvailability,
-  PANEL_AGENTS,
-  useInstalledAgents,
-} from "@/modules/agent-panel/lib/installedAgents";
+import { useEffect } from "react";
 import { AcpPanel } from "@/modules/acp-agent";
 import { PiPanel } from "@/modules/pi-agent";
 import { suspendPi } from "@/modules/pi-agent/store";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { type AgentId, setAgentPanelAgent } from "@/modules/settings/store";
-import { workspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
+import type { AgentId, AgentPanelMode } from "@/modules/settings/store";
+import type { WorkspaceEnv } from "@/modules/workspace";
 
 type Props = {
   cwd: string | null;
   workspace: WorkspaceEnv;
+  /** Pinned to a session tab; omitted only by future non-tab hosts. */
+  agent?: AgentId;
   onOpenFile?: (path: string, line?: number) => void;
+  /** Open a turn's changed file as a diff tab. */
+  onOpenDiff?: (path: string) => void;
+  initialModel?: string | null;
+  initialPrompt?: string | null;
+  onFanout?: (models: { model: string; prompt: string }[]) => void;
+  /** Present when hosted by a tab; drives the tab-bar status projection. */
+  tabId?: number;
+  tabActive?: boolean;
+  /** Harness instance (account) to use. */
+  profileId?: string | null;
+  /** Replace this tab with another account. */
+  onSwitchProfile?: (profileId: string) => void;
+  /** Restored tab: resume its latest harness session once connected. */
+  resumeLatest?: boolean;
+  /** Full-workspace surface (focus) or the compact right dock. */
+  layoutMode: AgentPanelMode;
+  onToggleLayout: () => void;
 };
 
-export function AgentPanel({ cwd, workspace, onOpenFile }: Props) {
+/**
+ * Pinned host for one agent session. Identity and account live in the panel
+ * header; switching agents happens from the Agents sidebar.
+ */
+export function AgentPanel({
+  cwd,
+  workspace,
+  agent: pinnedAgent,
+  onOpenFile,
+  onOpenDiff,
+  initialModel,
+  initialPrompt,
+  onFanout,
+  tabId,
+  tabActive,
+  profileId,
+  onSwitchProfile,
+  resumeLatest,
+  layoutMode,
+  onToggleLayout,
+}: Props) {
   const preferred = usePreferencesStore((state) => state.agentPanelAgent);
-  const installed = useInstalledAgents(workspace);
-  const agents = installed
-    ? PANEL_AGENTS.filter((agent) => installed.includes(agent.id))
-    : PANEL_AGENTS;
-  const active = agents.some((agent) => agent.id === preferred)
-    ? preferred
-    : (agents[0]?.id ?? preferred);
-  const noneInstalled = agents.length === 0;
+  const active: AgentId = pinnedAgent ?? preferred;
 
   useEffect(() => {
-    if (active !== preferred) void setAgentPanelAgent(active);
-  }, [active, preferred]);
-
-  useEffect(() => {
-    const mine = active;
+    if (active !== "pi") return;
     return () => {
-      if (mine === "pi") void suspendPi();
+      void suspendPi();
     };
   }, [active]);
-
-  if (noneInstalled) {
-    return (
-      <div className="flex h-full min-h-0 flex-col bg-card">
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-          <p className="text-[11px] text-muted-foreground">
-            No agent found on PATH
-          </p>
-          <p className="text-[11px] text-muted-foreground/70">
-            Install an ACP agent or Pi and reopen this panel.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const selectAgent = (id: AgentId) => {
-    void setAgentPanelAgent(id);
-    invalidateAgentAvailability();
-  };
-
-  const agentPicker = (
-    <AgentPicker agents={agents} active={active} onSelect={selectAgent} />
-  );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
@@ -83,59 +69,34 @@ export function AgentPanel({ cwd, workspace, onOpenFile }: Props) {
           <PiPanel
             cwd={cwd}
             workspace={workspace}
-            agentPicker={agentPicker}
             onOpenFile={onOpenFile}
+            tabId={tabId}
+            active={tabActive}
+            profileId={profileId}
+            onSwitchProfile={onSwitchProfile}
+            layoutMode={layoutMode}
+            onToggleLayout={onToggleLayout}
           />
         ) : (
           <AcpPanel
-            key={`${active}:${cwd ?? ""}:${workspaceScopeKey(workspace)}`}
             agent={active}
             cwd={cwd}
             workspace={workspace}
-            agentPicker={agentPicker}
             onOpenFile={onOpenFile}
+            onOpenDiff={onOpenDiff}
+            initialModel={initialModel}
+            initialPrompt={initialPrompt}
+            onFanout={onFanout}
+            tabId={tabId}
+            active={tabActive}
+            profileId={profileId}
+            onSwitchProfile={onSwitchProfile}
+            resumeLatest={resumeLatest}
+            layoutMode={layoutMode}
+            onToggleLayout={onToggleLayout}
           />
         )}
       </div>
     </div>
-  );
-}
-
-function AgentPicker({
-  agents,
-  active,
-  onSelect,
-}: {
-  agents: { id: AgentId; label: string }[];
-  active: AgentId;
-  onSelect: (agent: AgentId) => void;
-}): ReactNode {
-  const activeAgent = agents.find((agent) => agent.id === active);
-  if (!activeAgent) return null;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Change agent, currently ${activeAgent.label}`}
-          className="flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] font-semibold tracking-wide text-foreground uppercase transition-colors hover:bg-foreground/[0.06]"
-        >
-          <AgentIcon agent={activeAgent.id} size={15} />
-          {activeAgent.label}
-          <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-48">
-        <DropdownMenuLabel className="text-[10px]">Agent</DropdownMenuLabel>
-        {agents.map((agent) => (
-          <DropdownMenuItem key={agent.id} onSelect={() => onSelect(agent.id)}>
-            <AgentIcon agent={agent.id} size={14} />
-            <span className="flex-1">{agent.label}</span>
-            {agent.id === active ? <HugeiconsIcon icon={Tick02Icon} size={14} /> : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

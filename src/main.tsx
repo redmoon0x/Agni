@@ -38,6 +38,18 @@ await invoke("pi_close_all").catch(() => {});
 await invoke("acp_close_all").catch(() => {});
 await invoke("acp_terminal_close_all").catch(() => {});
 
+if (import.meta.env.DEV) {
+  const { agentCatalogDrift, syncAgentCatalog } = await import(
+    "@/modules/acp-agent/lib/agentCatalog"
+  );
+  void syncAgentCatalog().then((entries) => {
+    const drift = agentCatalogDrift(entries);
+    if (drift.length > 0) {
+      console.warn("[agni] ACP agent catalog drift:", drift.join("; "));
+    }
+  });
+}
+
 // Seed before first paint so default tab mounts at target cwd (no flicker).
 await initLaunchDir();
 

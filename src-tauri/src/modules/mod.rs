@@ -1,4 +1,5 @@
 pub mod acp;
+pub mod acp_registry;
 pub mod acp_terminal;
 pub mod agent;
 pub mod format;
@@ -10,6 +11,11 @@ pub mod pets;
 pub mod pi;
 pub mod pick_folder;
 pub mod proc;
+pub mod profile_lock;
+pub mod profile_probe;
+pub mod profile_storage;
 pub mod pty;
+pub mod secrets;
 pub mod shell;
+pub mod usage;
 pub mod workspace;

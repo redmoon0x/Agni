@@ -23,6 +23,8 @@ import { cn } from "@/lib/utils";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
 import { PathIcon } from "@/modules/explorer/lib/PathIcon";
 import { AgentIcon } from "@/modules/agent-panel/AgentIcon";
+import { AgentStatusDot } from "@/modules/agent-panel/AgentStatusDot";
+import { useAgentTabStatus } from "@/modules/agent-panel/lib/agentTabStatus";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { EditorTab, Tab } from "./lib/useTabs";
 
@@ -135,6 +137,7 @@ export function TabBar({
                     <span className={cn("truncate", isPreview && "italic")}>
                       {t.title}
                     </span>
+                    {t.kind === "agent" ? <TabStatusDot tabId={t.id} /> : null}
                     {t.kind === "editor" && t.dirty ? (
                       <span
                         aria-label="Unsaved changes"
@@ -215,8 +218,13 @@ export function TabBar({
   );
 }
 
+function TabStatusDot({ tabId }: { tabId: number }) {
+  const entry = useAgentTabStatus((state) => state.tabs[tabId]);
+  if (!entry) return null;
+  return <AgentStatusDot status={entry.status} unread={entry.unread} />;
+}
+
 function TabIcon({ tab }: { tab: Tab }) {
-  const activeAgent = usePreferencesStore((state) => state.agentPanelAgent);
   if (
     tab.kind === "editor" ||
     tab.kind === "markdown" ||
@@ -258,7 +266,7 @@ function TabIcon({ tab }: { tab: Tab }) {
     );
   }
   if (tab.kind === "agent") {
-    return <AgentIcon agent={activeAgent} size={14} className="shrink-0" />;
+    return <AgentIcon agent={tab.agent} size={14} className="shrink-0" />;
   }
   return (
     <HugeiconsIcon

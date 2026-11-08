@@ -7,6 +7,7 @@ import {
   FolderTransferIcon,
   GlobeIcon,
   Loading03Icon,
+  LinkSquare02Icon,
   MinusSignIcon,
   PencilEdit02Icon,
   RefreshIcon,
@@ -21,6 +22,16 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  EXTERNAL_EDITORS,
+  openInExternalEditor,
+} from "@/modules/agent-ui/lib/openInEditor";
 
 export type AgentToolStatus =
   | "pending"
@@ -149,12 +160,12 @@ export function AgentToolRow({
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="min-w-0 truncate text-[11px] font-medium text-foreground/85">
+              <span className="min-w-0 truncate text-[12px] font-medium text-foreground/90">
                 {title}
               </span>
               {meta ? (
                 <span
-                  className="shrink-0 truncate font-mono text-[9px] text-muted-foreground/50"
+                  className="min-w-0 max-w-[50%] shrink truncate font-mono text-[11px] text-muted-foreground"
                   title={meta}
                 >
                   {meta}
@@ -163,7 +174,7 @@ export function AgentToolRow({
             </span>
             {subtitle ? (
               <span
-                className="mt-0.5 block truncate font-mono text-[9.5px] text-muted-foreground/70"
+                className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground"
                 title={subtitle}
               >
                 {subtitle}
@@ -172,15 +183,49 @@ export function AgentToolRow({
           </span>
         </button>
         {path && onOpenPath ? (
-          <button
-            type="button"
-            onClick={() => onOpenPath(path, line ?? undefined)}
-            title="Open in editor"
-            aria-label="Open in editor"
-            className="mt-px shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-foreground/[0.06] hover:text-foreground focus-visible:opacity-100 group-hover/tool:opacity-100"
-          >
-            <HugeiconsIcon icon={SourceCodeIcon} size={12} strokeWidth={1.8} />
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => onOpenPath(path, line ?? undefined)}
+              title="Open in editor"
+              aria-label="Open in editor"
+              className="mt-px shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-foreground/[0.06] hover:text-foreground focus-visible:opacity-100 group-hover/tool:opacity-100"
+            >
+              <HugeiconsIcon icon={SourceCodeIcon} size={12} strokeWidth={1.8} />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  title="Open in…"
+                  aria-label="Open in external editor"
+                  className="mt-px shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-foreground/[0.06] hover:text-foreground focus-visible:opacity-100 group-hover/tool:opacity-100"
+                >
+                  <HugeiconsIcon
+                    icon={LinkSquare02Icon}
+                    size={12}
+                    strokeWidth={1.8}
+                  />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                {EXTERNAL_EDITORS.map((editor) => (
+                  <DropdownMenuItem
+                    key={editor.id}
+                    onSelect={() =>
+                      void openInExternalEditor(
+                        editor.id,
+                        path,
+                        line ?? undefined,
+                      ).catch(() => {})
+                    }
+                  >
+                    {editor.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
         ) : null}
         <ToolStatus status={status} />
         {expandable ? (

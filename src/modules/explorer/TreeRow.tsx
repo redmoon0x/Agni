@@ -3,12 +3,19 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { memo, useState } from "react";
+import {
+  EXTERNAL_EDITORS,
+  openInExternalEditor,
+} from "@/modules/agent-ui/lib/openInEditor";
 import { InlineInput } from "./InlineInput";
 import {
   copyToClipboard,
@@ -175,6 +182,26 @@ function EntryRowImpl(props: EntryRowProps) {
         >
           Reveal in Finder
         </ContextMenuItem>
+        {isDir ? null : (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger className={COMPACT_ITEM}>
+              Open in…
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="w-44">
+              {EXTERNAL_EDITORS.map((editor) => (
+                <ContextMenuItem
+                  key={editor.id}
+                  className={COMPACT_ITEM}
+                  onSelect={() =>
+                    void openInExternalEditor(editor.id, path).catch(() => {})
+                  }
+                >
+                  {editor.label}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
         <ContextMenuSeparator />
         <ContextMenuItem
           className={COMPACT_ITEM}

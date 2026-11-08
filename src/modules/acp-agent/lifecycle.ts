@@ -63,6 +63,7 @@ export function sameSessionConfig(
   if (a === null || b === null) return a === b;
   return (
     a.agent === b.agent &&
+    (a.profileId ?? null) === (b.profileId ?? null) &&
     normalizePath(a.cwd) === normalizePath(b.cwd) &&
     workspaceScopeKey(a.workspace) === workspaceScopeKey(b.workspace)
   );

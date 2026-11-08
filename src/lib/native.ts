@@ -11,6 +11,16 @@ export async function pickFolder(
   });
 }
 
+export async function pickFile(
+  title?: string,
+  startDir?: string,
+): Promise<string | null> {
+  return invoke("pick_file", {
+    title: title ?? null,
+    startDir: startDir ?? null,
+  });
+}
+
 export async function workspaceAuthorize(cwd: string): Promise<void> {
   await invoke("workspace_authorize", { path: cwd });
 }

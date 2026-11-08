@@ -5,6 +5,7 @@ import { CommandCodeLogoIcon } from "@/modules/acp-agent/CommandCodeLogoIcon";
 import { HermesLogoIcon } from "@/modules/acp-agent/HermesLogoIcon";
 import { KiloLogoIcon } from "@/modules/acp-agent/KiloLogoIcon";
 import { OpenCodeLogoIcon } from "@/modules/acp-agent/OpenCodeLogoIcon";
+import { OmpLogoIcon } from "@/modules/acp-agent/OmpLogoIcon";
 import { PiLogoIcon } from "@/modules/pi-agent/PiLogoIcon";
 import type { AgentId } from "@/modules/settings/store";
 
@@ -31,6 +32,9 @@ export function AgentIcon({
   }
   if (agent === "hermes") {
     return <HermesLogoIcon size={size} className={className} />;
+  }
+  if (agent === "omp") {
+    return <OmpLogoIcon size={size} className={className} />;
   }
   if (agent === "pi") {
     return <PiLogoIcon size={size} className={className} />;

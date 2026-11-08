@@ -26,9 +26,20 @@ export function terminalAuthCommand(
   method: AcpAuthMethod,
 ): string {
   const descriptor = acpAgent(agent);
-  const argv = [descriptor.program, ...descriptor.args, ...method.args].filter(
-    Boolean,
+  return terminalAuthCommandForProgram(
+    descriptor.program,
+    descriptor.args,
+    method,
   );
+}
+
+/** Same shell line, for registry agents whose launch spec is not static. */
+export function terminalAuthCommandForProgram(
+  program: string,
+  args: readonly string[],
+  method: AcpAuthMethod,
+): string {
+  const argv = [program, ...args, ...method.args].filter(Boolean);
   const command = argv.map(quoteArg).join(" ");
   const env = method.env.filter((entry) => entry.name);
   if (env.length === 0) return command;

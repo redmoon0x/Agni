@@ -6,18 +6,14 @@ use serde_json::{json, Value};
 
 use crate::modules::workspace::WorkspaceEnv;
 
-/// Agents Agni can launch, paired with the executable each one needs. Kept in
-/// step with `ACP_AGENTS` in `acp.rs` plus Pi, which has no ACP descriptor.
-const AGENT_PROGRAMS: &[(&str, &str)] = &[
-    ("opencode", "opencode"),
-    ("kilo", "kilo"),
-    ("commandcode", "commandcode"),
-    // Claude launches through the npx ACP adapter (see acp.rs) but is only
-    // offered when the Claude Code CLI itself is on PATH.
-    ("claude", "claude"),
-    ("hermes", "hermes"),
-    ("pi", "pi"),
-];
+/// Agents Agni can launch, as `(id, program-probed-on-PATH)`. ACP descriptors
+/// live in `acp.rs`; Pi has no ACP descriptor and is appended here. Deriving the
+/// probe list keeps availability in lockstep with the launch catalog.
+fn probe_agents() -> Vec<(&'static str, &'static str)> {
+    let mut agents = crate::modules::acp::agent_probes();
+    agents.push(("pi", "pi"));
+    agents
+}
 
 const HOOK_EVENTS: [(&str, &str); 3] = [
     ("UserPromptSubmit", "working"),
@@ -137,10 +133,17 @@ pub fn agents_installed(workspace: Option<WorkspaceEnv>) -> Result<Vec<String>, 
     Ok(agent_ids(&installed_programs(&workspace)))
 }
 
+/// Home directory, used to expand `~` in profile paths on the frontend.
+#[tauri::command]
+pub fn home_dir() -> Option<String> {
+    dirs::home_dir().map(|path| path.to_string_lossy().to_string())
+}
+
 fn agent_ids(found: &BTreeSet<&'static str>) -> Vec<String> {
-    AGENT_PROGRAMS
-        .iter()
-        .filter_map(|(id, program)| found.contains(program).then(|| (*id).to_string()))
+    probe_agents()
+        .into_iter()
+        .filter(|(_, program)| found.contains(program))
+        .map(|(id, _)| id.to_string())
         .collect()
 }
 
@@ -152,10 +155,10 @@ fn installed_programs(workspace: &WorkspaceEnv) -> BTreeSet<&'static str> {
 }
 
 fn installed_locally() -> BTreeSet<&'static str> {
-    AGENT_PROGRAMS
-        .iter()
+    probe_agents()
+        .into_iter()
         .filter(|(_, program)| crate::modules::proc::program_exists(program))
-        .map(|(_, program)| *program)
+        .map(|(_, program)| program)
         .collect()
 }
 
@@ -163,11 +166,12 @@ fn installed_locally() -> BTreeSet<&'static str> {
 /// Anything unrecognised (and any shell noise) is ignored.
 #[cfg(any(windows, test))]
 fn parse_probe_output(stdout: &str) -> BTreeSet<&'static str> {
+    let agents = probe_agents();
     stdout
         .lines()
         .filter_map(|line| {
             let name = line.trim().rsplit(['/', '\\']).next().unwrap_or("").trim();
-            AGENT_PROGRAMS
+            agents
                 .iter()
                 .find(|(_, program)| *program == name)
                 .map(|(_, program)| *program)
@@ -176,7 +180,7 @@ fn parse_probe_output(stdout: &str) -> BTreeSet<&'static str> {
 }
 
 fn all_programs() -> BTreeSet<&'static str> {
-    AGENT_PROGRAMS.iter().map(|(_, program)| *program).collect()
+    probe_agents().into_iter().map(|(_, program)| program).collect()
 }
 
 /// WSL has its own PATH, so the probe runs one shell inside the distro. Any
@@ -187,9 +191,9 @@ fn installed_programs_in_wsl(distro: &str) -> BTreeSet<&'static str> {
     if crate::modules::workspace::validate_wsl_distro_name(distro).is_err() {
         return all_programs();
     }
-    let names = AGENT_PROGRAMS
-        .iter()
-        .map(|(_, program)| *program)
+    let names = probe_agents()
+        .into_iter()
+        .map(|(_, program)| program)
         .collect::<Vec<_>>()
         .join(" ");
     let script = format!("for p in {names}; do command -v \"$p\"; done");

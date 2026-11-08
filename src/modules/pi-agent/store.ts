@@ -37,7 +37,11 @@ let generation = 0;
 const activeClient: { channel: Channel<PiProcessEvent> | null } = {
   channel: null,
 };
-let lastStart: { cwd: string | null; workspace: WorkspaceEnv } | null = null;
+let lastStart: {
+  cwd: string | null;
+  workspace: WorkspaceEnv;
+  profileEnv?: { name: string; value?: string; secret?: string }[];
+} | null = null;
 
 function requestId(): string {
   requestSequence += 1;
@@ -134,11 +138,12 @@ async function syncSessionStats(): Promise<void> {
 export function ensurePiStarted(
   cwd: string | null,
   workspace: WorkspaceEnv,
+  profileEnv?: { name: string; value?: string; secret?: string }[],
 ): Promise<void> {
   if (sessionId !== null) return Promise.resolve();
   if (startPromise) return startPromise;
 
-  lastStart = { cwd, workspace };
+  lastStart = { cwd, workspace, profileEnv };
   generation += 1;
   const eventGeneration = generation;
   const channel = new Channel<PiProcessEvent>();
@@ -154,6 +159,7 @@ export function ensurePiStarted(
   startPromise = invoke<{ sessionId: number }>("pi_start", {
     cwd,
     workspace,
+    profileEnv,
     onEvent: channel,
   })
     .then(async (result) => {
@@ -204,7 +210,8 @@ export async function suspendPi(): Promise<void> {
 
 export async function restartPi(): Promise<void> {
   await stopPi();
-  if (lastStart) await ensurePiStarted(lastStart.cwd, lastStart.workspace);
+  if (lastStart)
+    await ensurePiStarted(lastStart.cwd, lastStart.workspace, lastStart.profileEnv);
 }
 
 export async function promptPi(

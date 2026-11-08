@@ -1,4 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AgentId } from "@/modules/settings/store";
+import { workspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
+
+export function agentTabKey(
+  agent: AgentId,
+  cwd: string | null,
+  workspace: WorkspaceEnv,
+): string {
+  const root = (cwd ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return `${agent}:${root}:${workspaceScopeKey(workspace)}`;
+}
 
 export type EditorTab = {
   id: number;
@@ -89,6 +100,17 @@ export type AgentTab = {
   id: number;
   kind: "agent";
   title: string;
+  /** Stable identity: one tab per agent + cwd + workspace. */
+  key: string;
+  agent: AgentId;
+  cwd: string | null;
+  workspace: WorkspaceEnv;
+  /** Preselected model for fanout tabs. */
+  initialModel?: string | null;
+  /** Prompt prefilled into the composer for fanout tabs. */
+  initialPrompt?: string | null;
+  /** Harness instance (account) this tab runs. */
+  profileId?: string | null;
 };
 
 export type Tab =
@@ -494,24 +516,54 @@ export function useTabs() {
     [],
   );
 
-  /** The agent panel has a single global session, so there is ever only one tab. */
-  const newAgentTab = useCallback(() => {
-    const curr = tabsRef.current;
-    const existing = curr.find((t) => t.kind === "agent");
-    if (existing) {
-      setActiveId(existing.id);
-      return existing.id;
-    }
-    const id = nextIdRef.current++;
-    const nextTabs = [
-      ...curr,
-      { id, kind: "agent", title: "Agent" } satisfies AgentTab,
-    ];
-    tabsRef.current = nextTabs;
-    setTabs(nextTabs);
-    setActiveId(id);
-    return id;
-  }, []);
+  /** One tab per agent + cwd + workspace; re-opening an existing spec focuses it. */
+  const newAgentTab = useCallback(
+    (spec: {
+      agent: AgentId;
+      cwd: string | null;
+      workspace: WorkspaceEnv;
+      initialModel?: string | null;
+      initialPrompt?: string | null;
+      title?: string;
+      profileId?: string | null;
+      /** Agent tabs usually live in the right dock, not the workspace. */
+      focus?: boolean;
+    }) => {
+      const focus = spec.focus !== false;
+      const key = `${agentTabKey(spec.agent, spec.cwd, spec.workspace)}:${
+        spec.profileId ?? ""
+      }:${spec.initialModel ?? ""}`;
+      const curr = tabsRef.current;
+      const existing = curr.find(
+        (t) => t.kind === "agent" && t.key === key,
+      );
+      if (existing) {
+        if (focus) setActiveId(existing.id);
+        return existing.id;
+      }
+      const id = nextIdRef.current++;
+      const nextTabs = [
+        ...curr,
+        {
+          id,
+          kind: "agent",
+          title: spec.title ?? "Agent",
+          key,
+          agent: spec.agent,
+          cwd: spec.cwd,
+          workspace: spec.workspace,
+          initialModel: spec.initialModel ?? null,
+          initialPrompt: spec.initialPrompt ?? null,
+          profileId: spec.profileId ?? null,
+        } satisfies AgentTab,
+      ];
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      if (focus) setActiveId(id);
+      return id;
+    },
+    [],
+  );
 
   const closeTab = useCallback((id: number) => {
     setTabs((curr) => {

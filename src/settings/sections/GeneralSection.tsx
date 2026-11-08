@@ -26,6 +26,7 @@ import {
   setEditorAutoSaveDelay,
   setEditorFormatOnSave,
   setEditorInlineDiagnostics,
+  setPromptSounds,
   setShowHidden,
   setTerminalFontFamily,
   setTerminalLetterSpacing,
@@ -88,6 +89,7 @@ export function GeneralSection() {
   const terminalScrollback = usePreferencesStore((s) => s.terminalScrollback);
   const zoomLevel = usePreferencesStore((s) => s.zoomLevel);
   const agentNotifications = usePreferencesStore((s) => s.agentNotifications);
+  const promptSounds = usePreferencesStore((s) => s.promptSounds);
 
   useEffect(() => {
     let alive = true;
@@ -349,6 +351,25 @@ export function GeneralSection() {
             checked={agentNotifications}
             onCheckedChange={(v) => void setAgentNotifications(v)}
           />
+        </SettingRow>
+        <SettingRow
+          title="Agent completion sound"
+          description="Play a short chime when an agent finishes a turn."
+        >
+          <Select
+            value={promptSounds === "off" ? "off" : "sound"}
+            onValueChange={(value) =>
+              void setPromptSounds(value === "sound" ? "sound" : "off")
+            }
+          >
+            <SelectTrigger size="sm" className="h-8 w-28 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="sound">Sound</SelectItem>
+            </SelectContent>
+          </Select>
         </SettingRow>
       </div>
 

@@ -1,22 +1,19 @@
-import { getVersion } from "@tauri-apps/api/app";
+﻿import { getVersion } from "@tauri-apps/api/app";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { create } from "zustand";
+import { createStore, type StoreApi } from "zustand/vanilla";
 import {
   appendUserPrompt,
   mergeConfigOptions,
-  parseAuthMethods,
-  parseAgentCapabilities,
-  parseAgentInfo,
-  parseCommands,
-  parseConfigOptions,
-  parseEndTurnUsage,
-  parseModeState,
-  parseModelState,
   parseSessionListPage,
-  reconcileAcpUserMessage,
-  reduceAcpMessage,
   resetAcpConversation,
 } from "@/modules/acp-agent/acpState";
+import {
+  INITIAL_ACP_STORE,
+  asObject,
+  errorText,
+  reduceAcpFrame,
+  type AcpStore,
+} from "@/modules/acp-agent/projector";
 import {
   getAcpEditorBuffer,
   getAcpEditorBufferSnapshot,
@@ -28,26 +25,26 @@ import {
   settleWithin,
   withTimeout,
 } from "@/modules/acp-agent/lifecycle";
-import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
 import {
   terminalAuthCommand,
+  terminalAuthCommandForProgram,
   terminalAuthHint,
 } from "@/modules/acp-agent/terminalAuth";
+import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
 import { runInDockTerminal } from "@/modules/terminal-dock/lib/dockBridge";
 import { invalidateAgentAvailability } from "@/modules/agent-panel/lib/installedAgents";
-import {
-  INITIAL_ACP_STATE,
-  type AcpAttachment,
-  type AcpConnectionStatus,
-  type AcpPermissionRequest,
-  type AcpPermissionSubject,
-  type AcpProcessEvent,
-  type AcpSessionConfig,
-  type AcpSessionInfo,
-  type AcpState,
-  type AcpToolStatus,
+import { resolveProfileEnvWire } from "@/modules/agent-panel/lib/profile";
+import type {
+  AcpAttachment,
+  AcpPermissionRequest,
+  AcpPermissionSubject,
+  AcpProcessEvent,
+  AcpSessionConfig,
+  AcpSessionInfo,
+  AcpToolStatus,
 } from "@/modules/acp-agent/types";
 import { parseElicitationRequest } from "@/modules/acp-agent/elicitation";
+import { redactSecrets } from "@/modules/agent-ui/lib/secrets";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { currentWorkspaceEnv, type WorkspaceEnv } from "@/modules/workspace";
 
@@ -70,20 +67,50 @@ export type AcpPromptInput = {
   attachments?: AcpAttachment[];
 };
 
-type AcpStore = AcpState & {
-  connection: AcpConnectionStatus;
-  processError: string | null;
-  diagnostic: string | null;
+export type AcpClient = {
+  readonly config: AcpSessionConfig;
+  readonly store: StoreApi<AcpStore>;
+  /** Called by each mounted panel; the process is stopped when the last one releases. */
+  acquire(): void;
+  release(): void;
+  refCount(): number;
+  lastUsedAt(): number;
+  /** Stop the process and drop this client from the registry. */
+  dispose(): Promise<void>;
+  ensureStarted(): Promise<void>;
+  stop(): Promise<void>;
+  restart(): Promise<void>;
+  newSession(): Promise<void>;
+  listSessions(cursor?: string): Promise<{
+    sessions: AcpSessionInfo[];
+    nextCursor: string | null;
+  }>;
+  loadSession(sessionId: string): Promise<void>;
+  resumeSession(sessionId: string): Promise<void>;
+  forkSession(sessionId: string): Promise<void>;
+  deleteSession(sessionId: string): Promise<void>;
+  login(methodId: string): Promise<void>;
+  logout(): Promise<void>;
+  setConfigOption(configId: string, value: string | boolean): Promise<void>;
+  setMode(modeId: string): Promise<void>;
+  setModel(modelId: string): Promise<void>;
+  prompt(input: AcpPromptInput): Promise<void>;
+  cancel(): void;
+  refreshTerminal(terminalId: string): Promise<void>;
+  respondPermission(optionId: string | "cancelled"): void;
+  respondElicitation(
+    action: "accept" | "cancel" | "decline",
+    content?: Record<string, unknown>,
+  ): void;
+  /** UI-only escape hatch for local banners; never used for protocol state. */
+  setLocal(patch: Partial<AcpStore>): void;
 };
 
-const INITIAL_STORE: AcpStore = {
-  ...INITIAL_ACP_STATE,
-  connection: "idle",
-  processError: null,
-  diagnostic: null,
-};
-
-export const useAcpStore = create<AcpStore>(() => INITIAL_STORE);
+export function createAcpClient(config: AcpSessionConfig): AcpClient {
+  const store = createStore<AcpStore>(() => ({
+    ...INITIAL_ACP_STORE,
+    sessionConfig: config,
+  }));
 
 let processId: number | null = null;
 let requestSequence = 0;
@@ -91,16 +118,22 @@ let generation = 0;
 let promptRequestId: number | null = null;
 let promptLocalMessageId: string | null = null;
 let draining = false;
-let sessionConfig: AcpSessionConfig | null = null;
+let sessionConfig: AcpSessionConfig | null = config;
 let desired: AcpSessionConfig | null = null;
 let activeConfig: AcpSessionConfig | null = null;
+let refs = 0;
+let lastUsed = Date.now();
 const transitions = createSerialQueue();
 const activeClient: { channel: Channel<AcpProcessEvent> | null } = {
   channel: null,
 };
 const pending = new Map<
   number,
-  { resolve: (value: unknown) => void; reject: (error: unknown) => void }
+  {
+    method: string;
+    resolve: (value: unknown) => void;
+    reject: (error: unknown) => void;
+  }
 >();
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -120,12 +153,6 @@ const MIME_BY_EXT: Record<string, string> = {
   yaml: "text/yaml",
 };
 
-function asObject(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function requestId(): number {
   requestSequence += 1;
   return requestSequence;
@@ -141,26 +168,6 @@ function fileUri(path: string): string {
 function mimeForPath(path: string): string | undefined {
   const ext = path.split(".").pop()?.toLowerCase();
   return ext ? MIME_BY_EXT[ext] : undefined;
-}
-
-function errorText(error: unknown): string {
-  const object = asObject(error);
-  if (object) {
-    const message = typeof object.message === "string" ? object.message : null;
-    const code = typeof object.code === "number" ? object.code : null;
-    if (message) {
-      const base = code === null ? message : `${message} (code ${code})`;
-      if (code === -32000) {
-        return `${base}. Authenticate in a terminal (e.g. \`opencode auth login\`).`;
-      }
-      return base;
-    }
-  }
-  return String(error);
-}
-
-function isRunningAcpAgentError(error: unknown): boolean {
-  return errorText(error).includes("An ACP agent is already running");
 }
 
 function assertOutboundMessageSize(message: Record<string, unknown>): void {
@@ -184,7 +191,7 @@ function sendRequest(
 ): { id: number; promise: Promise<unknown> } {
   const id = requestId();
   const promise = new Promise<unknown>((resolve, reject) => {
-    pending.set(id, { resolve, reject });
+    pending.set(id, { method, resolve, reject });
     try {
       void send({ jsonrpc: "2.0", id, method, params }).catch((error) => {
         if (pending.delete(id)) reject(error);
@@ -221,7 +228,7 @@ function sessionCwd(): string | null {
 }
 
 function protocolVersion(): 1 | 2 {
-  return useAcpStore.getState().protocolVersion ?? 1;
+  return store.getState().protocolVersion ?? 1;
 }
 
 /** ACP v1 makes `mcpServers` a required field on session/new, session/load and
@@ -259,7 +266,7 @@ function sessionSetupDirectories(capabilities: {
 function hasActiveSession(params: Record<string, unknown>): boolean {
   const requested =
     typeof params.sessionId === "string" ? params.sessionId : null;
-  return requested !== null && requested === useAcpStore.getState().sessionId;
+  return requested !== null && requested === store.getState().sessionId;
 }
 
 function parseEnvEntries(value: unknown): { name: string; value: string }[] {
@@ -354,9 +361,9 @@ async function handleTerminalRequest(
       return;
     }
     if (method === "terminal/release") {
-      await refreshAcpTerminal(terminalId);
+      await refreshTerminal(terminalId);
       await invoke("acp_terminal_release", { terminalId });
-      useAcpStore.setState((state) => {
+      store.setState((state) => {
         const existing = state.terminals[terminalId];
         if (!existing) return {};
         return {
@@ -390,48 +397,22 @@ function handleResponse(
   const numericId = typeof id === "number" ? id : null;
   const entry = numericId === null ? undefined : pending.get(numericId);
   const error = message.error;
-  if (id === promptRequestId) {
+  const isPrompt = id === promptRequestId;
+  const localMessageId = promptLocalMessageId;
+  if (isPrompt) {
     promptRequestId = null;
-    const result = message.result as
-      | { stopReason?: string; usage?: unknown }
-      | null
-      | undefined;
-    if (result && "usage" in result && !error) {
-      useAcpStore.setState((state) => ({
-        usage: parseEndTurnUsage(result.usage, state.usage),
-      }));
-    }
-    if (useAcpStore.getState().notice?.kind === "retry") {
-      useAcpStore.setState({ notice: null });
-    }
-    if (protocolVersion() === 1) {
-      // v1 reports the outcome on the prompt response itself.
-      useAcpStore.setState({
-        isStreaming: false,
-        sessionState: "idle",
-        lastStopReason: error ? "error" : (result?.stopReason ?? null),
-        lastStopError: error ? errorText(error) : null,
-      });
-    } else {
-      const messageId =
-        result &&
-        typeof (result as { messageId?: unknown }).messageId === "string"
-          ? (result as { messageId: string }).messageId
-          : null;
-      if (messageId && promptLocalMessageId) {
-        const localId = promptLocalMessageId;
-        useAcpStore.setState((state) =>
-          reconcileAcpUserMessage(state, localId, messageId),
-        );
-      }
-      if (error) {
-        // In v2 an error response means the message was never inserted; the
-        // turn never started, so there is no stop reason to report.
-        useAcpStore.setState({ isStreaming: false, sessionState: "idle" });
-      }
-    }
     promptLocalMessageId = null;
   }
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "response",
+      id,
+      method: entry?.method ?? (isPrompt ? "session/prompt" : ""),
+      result: message.result ?? null,
+      error,
+      promptLocalMessageId: localMessageId,
+    }),
+  );
   if (!entry || numericId === null) return;
   pending.delete(numericId);
   if (error) entry.reject(new Error(errorText(error)));
@@ -541,7 +522,14 @@ async function handleClientRequest(
   params: Record<string, unknown>,
 ): Promise<void> {
   if (method === "session/request_permission") {
-    useAcpStore.setState({ permission: parsePermissionRequest(id, params) });
+    const permission = parsePermissionRequest(id, params);
+    store.setState((state) =>
+      reduceAcpFrame(state, {
+        kind: "request",
+        request: "permission",
+        value: permission,
+      }),
+    );
     return;
   }
 
@@ -551,11 +539,17 @@ async function handleClientRequest(
       sendError(id, -32602, "Unsupported elicitation request");
       return;
     }
-    if (useAcpStore.getState().elicitation) {
+    if (store.getState().elicitation) {
       sendError(id, -32000, "Another elicitation is already awaiting input");
       return;
     }
-    useAcpStore.setState({ elicitation });
+    store.setState((state) =>
+      reduceAcpFrame(state, {
+        kind: "request",
+        request: "elicitation",
+        value: elicitation,
+      }),
+    );
     return;
   }
 
@@ -675,13 +669,14 @@ function handleRpcMessage(value: unknown): void {
     const params = asObject(message.params) ?? {};
     const elicitationId =
       typeof params.elicitationId === "string" ? params.elicitationId : null;
-    const current = useAcpStore.getState().elicitation;
-    if (
-      elicitationId &&
-      current?.mode === "url" &&
-      current.elicitationId === elicitationId
-    ) {
-      useAcpStore.setState({ elicitation: null });
+    if (elicitationId) {
+      store.setState((state) =>
+        reduceAcpFrame(state, {
+          kind: "request",
+          request: "elicitation/complete",
+          elicitationId,
+        }),
+      );
     }
     if (id !== null) sendResult(id, null);
     return;
@@ -691,7 +686,9 @@ function handleRpcMessage(value: unknown): void {
     return;
   }
   if (method) {
-    useAcpStore.setState((state) => reduceAcpMessage(state, message));
+    store.setState((state) =>
+      reduceAcpFrame(state, { kind: "rpc", message }),
+    );
     return;
   }
   if (id !== null) handleResponse(id, message);
@@ -712,7 +709,9 @@ function handleProcessEvent(
     return;
   }
   if (event.kind === "stderr") {
-    useAcpStore.setState({ diagnostic: event.message });
+    store.setState((state) =>
+      reduceAcpFrame(state, { kind: "stderr", message: event.message }),
+    );
     return;
   }
   if (event.kind === "protocol_error") {
@@ -721,12 +720,12 @@ function handleProcessEvent(
     for (const entry of pending.values())
       entry.reject(new Error(event.message));
     pending.clear();
-    useAcpStore.setState({
-      rpcError: event.message,
-      isStreaming: false,
-      permission: null,
-      elicitation: null,
-    });
+    store.setState((state) =>
+      reduceAcpFrame(state, {
+        kind: "protocol_error",
+        message: event.message,
+      }),
+    );
     return;
   }
   processId = null;
@@ -737,19 +736,9 @@ function handleProcessEvent(
   for (const entry of pending.values())
     entry.reject(new Error("The agent exited"));
   pending.clear();
-  const diagnostic = useAcpStore.getState().diagnostic;
-  useAcpStore.setState({
-    connection: "exited",
-    sessionId: null,
-    isStreaming: false,
-    permission: null,
-    elicitation: null,
-    processError:
-      diagnostic ??
-      (event.code === 0 || event.code === null
-        ? null
-        : `The agent exited with code ${event.code}`),
-  });
+  store.setState((state) =>
+    reduceAcpFrame(state, { kind: "exit", code: event.code }),
+  );
 }
 
 async function stopProcess(
@@ -786,7 +775,6 @@ async function stopProcess(
       "Timed out stopping the agent",
     ).catch(() => {});
   }
-  await invoke("acp_terminal_close_all").catch(() => {});
 }
 
 async function spawnSession(
@@ -794,23 +782,39 @@ async function spawnSession(
   eventGeneration: number,
 ): Promise<void> {
   const start = async (): Promise<{ sessionId: number }> => {
-    try {
-      return await invoke<{ sessionId: number }>("acp_start", {
+    const launch = config.launch;
+    if (launch?.custom) {
+      return invoke<{ sessionId: number }>("acp_start_custom", {
         agent: config.agent,
-        cwd: config.cwd,
-        workspace: config.workspace,
-        onEvent: activeClient.channel,
-      });
-    } catch (error) {
-      if (!isRunningAcpAgentError(error)) throw error;
-      await invoke("acp_close_all");
-      return invoke<{ sessionId: number }>("acp_start", {
-        agent: config.agent,
+        label: config.agent,
+        program: launch.program,
+        args: [...launch.args, ...(config.profileArgs ?? [])],
+        env: [...launch.env, ...(config.profileEnv ?? [])],
         cwd: config.cwd,
         workspace: config.workspace,
         onEvent: activeClient.channel,
       });
     }
+    if (launch) {
+      return invoke<{ sessionId: number }>("acp_start_managed", {
+        agent: config.agent,
+        label: config.agent,
+        program: launch.program,
+        args: [...launch.args, ...(config.profileArgs ?? [])],
+        env: [...launch.env, ...(config.profileEnv ?? [])],
+        cwd: config.cwd,
+        workspace: config.workspace,
+        onEvent: activeClient.channel,
+      });
+    }
+    return invoke<{ sessionId: number }>("acp_start", {
+      agent: config.agent,
+      cwd: config.cwd,
+      workspace: config.workspace,
+      profileEnv: config.profileEnv,
+      extraArgs: config.profileArgs,
+      onEvent: activeClient.channel,
+    });
   };
 
   const result = await start();
@@ -858,9 +862,14 @@ async function spawnSession(
     );
   }
   const selectedVersion = initialized.protocolVersion;
-  const selectedCapabilities = parseAgentCapabilities(
-    initialized.capabilities ?? initialized.agentCapabilities,
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "setup",
+      step: "initialize",
+      result: initialized,
+    }),
   );
+  const selectedCapabilities = store.getState().capabilities;
   const sessionParams: Record<string, unknown> = withMcpServers(
     { cwd: config.cwd },
     selectedVersion,
@@ -872,31 +881,41 @@ async function spawnSession(
   const created = (await sendRequest("session/new", sessionParams)
     .promise) as {
     sessionId?: string;
-    configOptions?: unknown;
-    modes?: unknown;
-    models?: unknown;
-    availableCommands?: unknown;
   } | null;
   if (!created?.sessionId) {
     throw new Error("The agent did not return a session id");
   }
   if (eventGeneration !== generation) return;
-  const modeState = parseModeState(created.modes);
-  useAcpStore.setState({
-    connection: "ready",
-    processError: null,
-    sessionId: created.sessionId,
-    configOptions: parseConfigOptions(created.configOptions),
-    commands: parseCommands(created.availableCommands),
-    modeState,
-    currentMode: modeState?.currentModeId ?? null,
-    modelState: parseModelState(created.models),
-    protocolVersion: initialized.protocolVersion,
-    agentInfo: parseAgentInfo(initialized.info ?? initialized.agentInfo),
-    capabilities: selectedCapabilities,
-    authMethods: parseAuthMethods(initialized.authMethods),
-    sessionConfig,
-  });
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "setup",
+      step: "session/new",
+      result: created,
+      sessionConfig,
+    }),
+  );
+  if (config.initialModel) {
+    await sendRequest("session/set_model", {
+      sessionId: created.sessionId,
+      modelId: config.initialModel,
+    })
+      .promise.then(() => {
+        if (eventGeneration !== generation) return;
+        store.setState((current) =>
+          current.modelState
+            ? {
+                modelState: {
+                  ...current.modelState,
+                  currentModelId: config.initialModel ?? null,
+                },
+              }
+            : {},
+        );
+      })
+      .catch(() => {
+        // A fanout tab still opens even if the model cannot be preselected.
+      });
+  }
 }
 
 async function transitionTo(
@@ -904,6 +923,15 @@ async function transitionTo(
   force = false,
 ): Promise<void> {
   await transitions.enqueue(async () => {
+    if (config?.profileEnvError) {
+      const message = config.profileEnvError;
+      store.setState({
+        connection: "error",
+        processError: message,
+        sessionConfig,
+      });
+      throw new Error(message);
+    }
     if (!force) {
       if (config !== null && !sameSessionConfig(desired, config)) return;
       if (config === null && desired !== null) return;
@@ -916,11 +944,11 @@ async function transitionTo(
       }
     }
 
-    const prior = useAcpStore.getState();
+    const prior = store.getState();
     const closeSessionId = prior.sessionId;
     const canClose = prior.capabilities.sessionClose;
-    useAcpStore.setState({
-      ...INITIAL_STORE,
+    store.setState({
+      ...INITIAL_ACP_STORE,
       connection: config === null ? "stopped" : "starting",
       sessionConfig,
     });
@@ -958,7 +986,7 @@ async function transitionTo(
       }
       const message = errorText(error);
       if (message.includes("is on PATH")) invalidateAgentAvailability();
-      useAcpStore.setState({
+      store.setState({
         connection: "error",
         processError: message,
         sessionConfig,
@@ -968,28 +996,23 @@ async function transitionTo(
   });
 }
 
-export function ensureAcpStarted(
-  agent: AcpAgentId,
-  cwd: string | null,
-  workspace: WorkspaceEnv,
-): Promise<void> {
-  if (!cwd) {
+function ensureStarted(): Promise<void> {
+  if (!config.cwd) {
     const error = "Open a folder before starting the agent";
-    useAcpStore.setState({ connection: "error", processError: error });
+    store.setState({ connection: "error", processError: error });
     return Promise.reject(new Error(error));
   }
-  const config: AcpSessionConfig = { agent, cwd, workspace };
   sessionConfig = config;
   desired = config;
   return transitionTo(config);
 }
 
-export function stopAcp(): Promise<void> {
+function stop(): Promise<void> {
   desired = null;
   return transitionTo(null);
 }
 
-export function restartAcp(): Promise<void> {
+function restart(): Promise<void> {
   const config = sessionConfig;
   if (!config) return Promise.resolve();
   desired = config;
@@ -999,40 +1022,34 @@ export function restartAcp(): Promise<void> {
 async function createSession(cwd: string): Promise<void> {
   const params = withMcpServers({ cwd }, protocolVersion());
   const additionalDirectories = sessionSetupDirectories(
-    useAcpStore.getState().capabilities,
+    store.getState().capabilities,
   );
   if (additionalDirectories.length > 0) {
     params.additionalDirectories = additionalDirectories;
   }
   const created = (await sendRequest("session/new", params).promise) as {
     sessionId?: string;
-    configOptions?: unknown;
-    modes?: unknown;
-    models?: unknown;
-    availableCommands?: unknown;
   } | null;
   if (!created?.sessionId) {
     throw new Error("The agent did not return a session id");
   }
-  const modeState = parseModeState(created.modes);
-  useAcpStore.setState({
-    sessionId: created.sessionId,
-    configOptions: parseConfigOptions(created.configOptions),
-    commands: parseCommands(created.availableCommands),
-    modeState,
-    currentMode: modeState?.currentModeId ?? null,
-    modelState: parseModelState(created.models),
-  });
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "setup",
+      step: "session/new",
+      result: created,
+    }),
+  );
 }
 
-export async function newAcpSession(): Promise<void> {
+async function newSession(): Promise<void> {
   const cwd = sessionCwd();
   if (!cwd) return;
-  useAcpStore.setState((state) => resetAcpConversation(state));
+  store.setState((state) => resetAcpConversation(state));
   await createSession(cwd);
 }
 
-export async function listAcpSessions(cursor?: string): Promise<{
+async function listSessions(cursor?: string): Promise<{
   sessions: AcpSessionInfo[];
   nextCursor: string | null;
 }> {
@@ -1047,16 +1064,16 @@ export async function listAcpSessions(cursor?: string): Promise<{
   return parseSessionListPage(result);
 }
 
-export async function loadAcpSession(sessionId: string): Promise<void> {
+async function loadSession(sessionId: string): Promise<void> {
   const cwd = sessionCwd();
   if (!cwd) return;
-  const capabilities = useAcpStore.getState().capabilities;
+  const capabilities = store.getState().capabilities;
   const version = protocolVersion();
   const canLoad = version === 1 && capabilities.loadSession;
   if (!canLoad && !capabilities.sessionResume) {
     throw new Error("This agent cannot load previous sessions.");
   }
-  useAcpStore.setState((state) => resetAcpConversation(state));
+  store.setState((state) => resetAcpConversation(state));
   const method = canLoad ? "session/load" : "session/resume";
   const params = withMcpServers({ sessionId, cwd }, version);
   if (!canLoad) params.replayFrom = { type: "start" };
@@ -1064,129 +1081,100 @@ export async function loadAcpSession(sessionId: string): Promise<void> {
   if (additionalDirectories.length > 0) {
     params.additionalDirectories = additionalDirectories;
   }
-  const result = (await sendRequest(method, params).promise) as {
-    configOptions?: unknown;
-    modes?: unknown;
-    models?: unknown;
-    availableCommands?: unknown;
-  } | null;
-  const modeState = parseModeState(result?.modes);
-  useAcpStore.setState({
-    sessionId,
-    configOptions: parseConfigOptions(result?.configOptions),
-    commands: parseCommands(result?.availableCommands),
-    modeState,
-    currentMode: modeState?.currentModeId ?? null,
-    modelState:
-      result?.models === undefined
-        ? useAcpStore.getState().modelState
-        : parseModelState(result.models),
-    permission: null,
-    elicitation: null,
-  });
+  const result = (await sendRequest(method, params).promise) as unknown;
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "setup",
+      step: canLoad ? "session/load" : "session/resume",
+      result: { ...(asObject(result) ?? {}), sessionId },
+    }),
+  );
 }
 
-export async function resumeAcpSession(sessionId: string): Promise<void> {
+async function resumeSession(sessionId: string): Promise<void> {
   const cwd = sessionCwd();
-  if (!cwd || !useAcpStore.getState().capabilities.sessionResume) return;
-  useAcpStore.setState((state) => resetAcpConversation(state));
+  if (!cwd || !store.getState().capabilities.sessionResume) return;
+  store.setState((state) => resetAcpConversation(state));
   const params = withMcpServers({ sessionId, cwd }, protocolVersion());
   const additionalDirectories = sessionSetupDirectories(
-    useAcpStore.getState().capabilities,
+    store.getState().capabilities,
   );
   if (additionalDirectories.length > 0) {
     params.additionalDirectories = additionalDirectories;
   }
-  const result = (await sendRequest("session/resume", params).promise) as {
-    configOptions?: unknown;
-    modes?: unknown;
-    models?: unknown;
-    availableCommands?: unknown;
-  } | null;
-  useAcpStore.setState((state) => {
-    const modeState =
-      result?.modes === undefined ? state.modeState : parseModeState(result.modes);
-    return {
-      sessionId,
-      configOptions: mergeConfigOptions(
-        state.configOptions,
-        result?.configOptions,
-      ),
-      commands: Array.isArray(result?.availableCommands)
-        ? parseCommands(result.availableCommands)
-        : state.commands,
-      modeState,
-      currentMode: modeState?.currentModeId ?? null,
-      modelState:
-        result?.models === undefined
-          ? state.modelState
-          : parseModelState(result.models),
-      permission: null,
-      elicitation: null,
-    };
-  });
+  const result = (await sendRequest("session/resume", params).promise) as unknown;
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "setup",
+      step: "session/resume",
+      result: { ...(asObject(result) ?? {}), sessionId },
+    }),
+  );
 }
 
 /** `session/fork` is a draft RFD, not part of the v1 or v2 stable schema. The
  *  call is gated on the agent advertising `session: { fork: {} }`, and takes
  *  the same options as `session/load`. Agents that do not implement it never
  *  advertise the capability, so the method is never sent to them. */
-export async function forkAcpSession(sessionId: string): Promise<void> {
+async function forkSession(sessionId: string): Promise<void> {
   const cwd = sessionCwd();
-  if (!cwd || !useAcpStore.getState().capabilities.sessionFork) return;
-  useAcpStore.setState((state) => resetAcpConversation(state));
+  if (!cwd || !store.getState().capabilities.sessionFork) return;
+  store.setState((state) => resetAcpConversation(state));
   const params = withMcpServers({ sessionId, cwd }, protocolVersion());
   const additionalDirectories = sessionSetupDirectories(
-    useAcpStore.getState().capabilities,
+    store.getState().capabilities,
   );
   if (additionalDirectories.length > 0) {
     params.additionalDirectories = additionalDirectories;
   }
   const result = (await sendRequest("session/fork", params).promise) as {
     sessionId?: string;
-    configOptions?: unknown;
-    modes?: unknown;
-    models?: unknown;
-    availableCommands?: unknown;
   } | null;
   if (!result?.sessionId) {
     throw new Error("The agent did not return a forked session id");
   }
-  const modeState = parseModeState(result.modes);
-  useAcpStore.setState({
-    sessionId: result.sessionId,
-    configOptions: parseConfigOptions(result.configOptions),
-    commands: parseCommands(result.availableCommands),
-    modeState,
-    currentMode: modeState?.currentModeId ?? null,
-    modelState: parseModelState(result.models),
-    permission: null,
-    elicitation: null,
-  });
+  store.setState((state) =>
+    reduceAcpFrame(state, {
+      kind: "setup",
+      step: "session/fork",
+      result,
+    }),
+  );
 }
 
-export async function deleteAcpSession(sessionId: string): Promise<void> {
-  if (!useAcpStore.getState().capabilities.sessionDelete) return;
+async function deleteSession(sessionId: string): Promise<void> {
+  if (!store.getState().capabilities.sessionDelete) return;
   await sendRequest("session/delete", { sessionId }).promise;
-  if (useAcpStore.getState().sessionId === sessionId) await newAcpSession();
+  if (store.getState().sessionId === sessionId) await newSession();
 }
 
-export async function loginAcp(methodId: string): Promise<void> {
-  const method = useAcpStore
+async function login(methodId: string): Promise<void> {
+  const method = store
     .getState()
     .authMethods.find((candidate) => candidate.methodId === methodId);
   if (!method) return;
   if (method.type === "terminal") {
-    const agent = sessionConfig?.agent;
-    if (!agent) return;
-    const command = terminalAuthCommand(agent, method);
+    const active = sessionConfig;
+    if (!active) return;
+    const profileEnv = await resolveProfileEnvWire(active.profileEnv ?? []);
+    const methodWithEnv = {
+      ...method,
+      env: [...method.env, ...profileEnv],
+    };
+    const command = active.launch
+      ? terminalAuthCommandForProgram(
+          active.launch.program,
+          [...active.launch.args, ...(active.profileArgs ?? [])],
+          methodWithEnv,
+        )
+      : terminalAuthCommand(active.agent as AcpAgentId, methodWithEnv);
     const opened = await runInDockTerminal(command);
     if (!opened) {
       throw new Error(
         "Open a workspace first, then sign in with this command in a Agni terminal.",
       );
     }
-    useAcpStore.setState({
+    store.setState({
       notice: {
         kind: "auth",
         text: terminalAuthHint(command),
@@ -1200,9 +1188,9 @@ export async function loginAcp(methodId: string): Promise<void> {
   }).promise;
 }
 
-export async function logoutAcp(): Promise<void> {
+async function logout(): Promise<void> {
   if (
-    !useAcpStore.getState().capabilities.authLogout &&
+    !store.getState().capabilities.authLogout &&
     protocolVersion() === 1
   )
     return;
@@ -1210,17 +1198,17 @@ export async function logoutAcp(): Promise<void> {
     .promise;
 }
 
-export async function setAcpConfigOption(
+async function setConfigOption(
   configId: string,
   value: string | boolean,
 ): Promise<void> {
-  const state = useAcpStore.getState();
+  const state = store.getState();
   const sessionId = state.sessionId;
   if (!sessionId) return;
   const originalValue = state.configOptions.find(
     (option) => option.id === configId,
   )?.currentValue;
-  useAcpStore.setState({
+  store.setState({
     configOptions: state.configOptions.map((option) =>
       option.id === configId ? { ...option, currentValue: value } : option,
     ),
@@ -1231,7 +1219,7 @@ export async function setAcpConfigOption(
   try {
     const result = (await sendRequest("session/set_config_option", params)
       .promise) as { configOptions?: unknown } | null;
-    useAcpStore.setState((current) => {
+    store.setState((current) => {
       if (current.sessionId !== sessionId) return {};
       return {
         configOptions: mergeConfigOptions(
@@ -1241,7 +1229,7 @@ export async function setAcpConfigOption(
       };
     });
   } catch (error) {
-    useAcpStore.setState((current) => {
+    store.setState((current) => {
       if (current.sessionId !== sessionId || originalValue === undefined) {
         return {};
       }
@@ -1257,11 +1245,11 @@ export async function setAcpConfigOption(
   }
 }
 
-export async function setAcpMode(modeId: string): Promise<void> {
-  const sessionId = useAcpStore.getState().sessionId;
+async function setMode(modeId: string): Promise<void> {
+  const sessionId = store.getState().sessionId;
   if (!sessionId) return;
   await sendRequest("session/set_mode", { sessionId, modeId }).promise;
-  useAcpStore.setState({ currentMode: modeId });
+  store.setState({ currentMode: modeId });
 }
 
 /**
@@ -1269,18 +1257,18 @@ export async function setAcpMode(modeId: string): Promise<void> {
  * (`SessionModelState`) get this call, so an agent without it never sees a
  * method it does not implement.
  */
-export async function setAcpModel(modelId: string): Promise<void> {
-  const state = useAcpStore.getState();
+async function setModel(modelId: string): Promise<void> {
+  const state = store.getState();
   const sessionId = state.sessionId;
   if (!sessionId || !state.modelState) return;
   const original = state.modelState.currentModelId;
-  useAcpStore.setState({
+  store.setState({
     modelState: { ...state.modelState, currentModelId: modelId },
   });
   try {
     await sendRequest("session/set_model", { sessionId, modelId }).promise;
   } catch (error) {
-    useAcpStore.setState((current) => {
+    store.setState((current) => {
       if (current.sessionId !== sessionId || !current.modelState) return {};
       return {
         modelState: { ...current.modelState, currentModelId: original },
@@ -1296,11 +1284,12 @@ export async function setAcpModel(modelId: string): Promise<void> {
  *  read only the lines it needs. */
 const MAX_INLINE_MENTION_BYTES = 256 * 1024;
 
-export async function promptAcp(input: AcpPromptInput): Promise<void> {
-  const sessionId = useAcpStore.getState().sessionId;
+async function prompt(input: AcpPromptInput): Promise<void> {
+  const sessionId = store.getState().sessionId;
   if (!sessionId) throw new Error("The agent session is not ready");
   const blocks: Record<string, unknown>[] = [];
-  const text = input.text.trim();
+  const redaction = redactSecrets(input.text.trim());
+  const text = redaction.text.trim();
   if (text) blocks.push({ type: "text", text });
   for (const mention of input.mentions ?? []) {
     const uri = fileUri(mention.path);
@@ -1350,22 +1339,33 @@ export async function promptAcp(input: AcpPromptInput): Promise<void> {
   const display =
     text ||
     (input.attachments?.length ? "Sent an attachment" : "Sent file context");
-  useAcpStore.setState((state) => {
+  store.setState((state) => {
     const next = appendUserPrompt(state, display);
     promptLocalMessageId = next.messages[next.messages.length - 1]?.id ?? null;
     return next;
   });
   const { id, promise } = sendRequest("session/prompt", params);
   promptRequestId = id;
-  useAcpStore.setState({
+  store.setState({
     isStreaming: true,
     sessionState: "running",
     lastStopReason: null,
     lastStopError: null,
     rpcError: null,
   });
+  if (redaction.redacted.length > 0) {
+    store.setState({
+      notice: {
+        kind: "notice",
+        severity: "warning",
+        text: `Redacted ${redaction.redacted.length} credential${
+          redaction.redacted.length === 1 ? "" : "s"
+        } before sending (${redaction.redacted.join(", ")}).`,
+      },
+    });
+  }
   promise.catch((error) => {
-    useAcpStore.setState((state) =>
+    store.setState((state) =>
       state.sessionId === sessionId
         ? {
             rpcError: errorText(error),
@@ -1377,19 +1377,19 @@ export async function promptAcp(input: AcpPromptInput): Promise<void> {
   });
 }
 
-export function cancelAcp(): void {
-  const sessionId = useAcpStore.getState().sessionId;
+function cancel(): void {
+  const sessionId = store.getState().sessionId;
   if (sessionId) sendNotification("session/cancel", { sessionId });
-  if (useAcpStore.getState().permission) respondToPermission("cancelled");
-  if (useAcpStore.getState().elicitation) respondToElicitation("cancel");
+  if (store.getState().permission) respondPermission("cancelled");
+  if (store.getState().elicitation) respondElicitation("cancel");
 }
 
-export async function refreshAcpTerminal(terminalId: string): Promise<void> {
+async function refreshTerminal(terminalId: string): Promise<void> {
   try {
     const result = await invoke<TerminalOutputResult>("acp_terminal_output", {
       terminalId,
     });
-    useAcpStore.setState((state) => {
+    store.setState((state) => {
       const existing = state.terminals[terminalId];
       return {
         terminals: {
@@ -1413,26 +1413,83 @@ export async function refreshAcpTerminal(terminalId: string): Promise<void> {
   }
 }
 
-export function respondToPermission(optionId: string | "cancelled"): void {
-  const permission = useAcpStore.getState().permission;
+function respondPermission(optionId: string | "cancelled"): void {
+  const permission = store.getState().permission;
   if (!permission) return;
   const outcome =
     optionId === "cancelled"
       ? { outcome: "cancelled" }
       : { outcome: "selected", optionId };
   sendResult(permission.id, { outcome });
-  useAcpStore.setState({ permission: null });
+  store.setState({ permission: null });
 }
 
-export function respondToElicitation(
+function respondElicitation(
   action: "accept" | "cancel" | "decline",
   content?: Record<string, unknown>,
 ): void {
-  const elicitation = useAcpStore.getState().elicitation;
+  const elicitation = store.getState().elicitation;
   if (!elicitation) return;
   sendResult(elicitation.id, {
     action,
     ...(action === "accept" ? { content: content ?? {} } : {}),
   });
-  useAcpStore.setState({ elicitation: null });
+  store.setState({ elicitation: null });
+}
+
+function acquire(): void {
+  refs += 1;
+  lastUsed = Date.now();
+}
+
+function release(): void {
+  refs = Math.max(0, refs - 1);
+  lastUsed = Date.now();
+}
+
+function refCount(): number {
+  return refs;
+}
+
+function lastUsedAt(): number {
+  return lastUsed;
+}
+
+function setLocal(patch: Partial<AcpStore>): void {
+  store.setState(patch);
+}
+
+async function dispose(): Promise<void> {
+  await stop();
+}
+
+  return {
+    config,
+    store,
+    acquire,
+    release,
+    refCount,
+    lastUsedAt,
+    dispose,
+    ensureStarted,
+    stop,
+    restart,
+    newSession,
+    listSessions,
+    loadSession,
+    resumeSession,
+    forkSession,
+    deleteSession,
+    login,
+    logout,
+    setConfigOption,
+    setMode,
+    setModel,
+    prompt,
+    cancel,
+    refreshTerminal,
+    respondPermission,
+    respondElicitation,
+    setLocal,
+  };
 }

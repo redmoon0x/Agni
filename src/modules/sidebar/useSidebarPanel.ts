@@ -39,7 +39,8 @@ function readSidebarView(): SidebarViewId {
     if (
       stored === "explorer" ||
       stored === "source-control" ||
-      stored === "search"
+      stored === "search" ||
+      stored === "agents"
     ) {
       return stored;
     }

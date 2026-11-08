@@ -25,3 +25,27 @@ pub async fn pick_folder(
         fs::to_canon(&p)
     }))
 }
+
+/// Opens a native file picker and returns the selected file's canonical path.
+#[tauri::command]
+pub async fn pick_file(
+    title: Option<String>,
+    start_dir: Option<String>,
+) -> Result<Option<String>, String> {
+    let mut dialog =
+        rfd::AsyncFileDialog::new().set_title(&title.unwrap_or_else(|| "Open File".into()));
+
+    if let Some(dir) = start_dir {
+        if let Ok(path) = PathBuf::from(&dir).canonicalize() {
+            if path.is_dir() {
+                dialog = dialog.set_directory(&path);
+            }
+        }
+    }
+
+    let handle = dialog.pick_file().await;
+    Ok(handle.map(|h| {
+        let p = h.path().to_path_buf();
+        fs::to_canon(&p)
+    }))
+}

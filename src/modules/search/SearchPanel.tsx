@@ -167,29 +167,33 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-col gap-1 px-2 py-1.5">
+      <div className="flex shrink-0 flex-col gap-2 border-b border-border/60 px-3 py-3">
+        <label htmlFor="workspace-search" className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          Search files
+        </label>
         <div className="relative">
           <HugeiconsIcon
             icon={Search01Icon}
-            size={13}
+            size={15}
             strokeWidth={2}
-            className="absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
           />
           <Input
+            id="workspace-search"
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search in files…"
-            className="h-7 pr-14 pl-6.5 text-xs"
+            className="h-9 rounded-md border-border/70 bg-background/70 pr-16 pl-9 text-sm focus-visible:ring-2"
           />
-          <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-0.5">
+          <div className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1">
             <button
               type="button"
               aria-pressed={caseSensitive}
               title="Match Case"
               onClick={() => setCaseSensitive((v) => !v)}
               className={cn(
-                "rounded px-1 py-0.5 text-[10px] font-semibold",
+                "rounded px-1.5 py-1 text-[11px] font-semibold",
                 caseSensitive
                   ? "bg-primary/20 text-foreground"
                   : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -209,21 +213,22 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
             ) : null}
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center gap-2">
           <Input
+            aria-label="Files to include"
             value={includeGlob}
             onChange={(e) => setIncludeGlob(e.target.value)}
-            placeholder="files to include (e.g. *.ts)"
-            className="h-6 text-[11px]"
+            placeholder="Files to include (e.g. *.ts)"
+            className="h-9 min-w-0 flex-1 rounded-md border-border/70 bg-background/70 text-sm focus-visible:ring-2"
           />
           <button
             type="button"
             aria-expanded={replaceOpen}
             onClick={() => setReplaceOpen((v) => !v)}
             className={cn(
-              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              "h-9 shrink-0 rounded-md border border-border/70 px-3 text-xs font-medium transition-colors",
               replaceOpen
-                ? "bg-primary/20 text-foreground"
+                ? "border-primary/40 bg-primary/15 text-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
@@ -231,20 +236,21 @@ export function SearchPanel({ rootPath, onOpenResult }: Props) {
           </button>
         </div>
         {replaceOpen ? (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 items-center gap-2">
             <Input
+              aria-label="Replace with"
               value={replacement}
               onChange={(e) => setReplacement(e.target.value)}
-              placeholder="replace with…"
-              className="h-6 text-[11px]"
+              placeholder="Replace with…"
+              className="h-9 min-w-0 flex-1 rounded-md border-border/70 bg-background/70 text-sm focus-visible:ring-2"
             />
             <button
               type="button"
               disabled={!active || replacing}
               onClick={() => void replaceAll()}
-              className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground disabled:opacity-50"
+              className="h-9 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50"
             >
-              {replacing ? "…" : "All"}
+              {replacing ? "Replacing…" : "Replace all"}
             </button>
           </div>
         ) : null}

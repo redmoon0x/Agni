@@ -26,8 +26,8 @@ const PILL: Partial<
   },
   waiting: {
     label: "Waiting",
-    tone: "border-primary/35 bg-primary/10 text-primary",
-    dot: "bg-primary",
+    tone: "border-amber-500/35 bg-amber-500/10 text-amber-500",
+    dot: "bg-amber-500",
   },
   starting: {
     label: "Starting",
@@ -52,7 +52,7 @@ export function AgentStatusPill({ status }: { status: AgentRunStatus }) {
   return (
     <span
       className={cn(
-        "flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-medium tracking-wide uppercase",
+        "flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium tracking-wide uppercase",
         pill.tone,
       )}
     >
@@ -86,6 +86,7 @@ export function AgentIconButton({
 
 export function AgentHeader({
   picker,
+  chips,
   mark,
   label,
   status,
@@ -96,6 +97,8 @@ export function AgentHeader({
   actions,
 }: {
   picker?: ReactNode;
+  /** Extra identity chips (account, model, mode) after the label. */
+  chips?: ReactNode;
   mark: ReactNode;
   label: string;
   status: AgentRunStatus;
@@ -107,24 +110,27 @@ export function AgentHeader({
 }) {
   return (
     <header className="shrink-0 border-b border-border/60 px-2.5">
-      <div className="flex h-7 items-center gap-2">
+      <div className="flex h-9 items-center gap-2">
         {picker ?? (
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="grid size-6 shrink-0 place-items-center rounded-md border border-border/50 bg-background/50">
               {mark}
             </span>
-            <span className="truncate text-[11px] font-semibold tracking-wide uppercase">
+            <span className="truncate text-[13px] font-semibold tracking-wide uppercase">
               {label}
             </span>
           </span>
         )}
+        {chips ? (
+          <span className="flex shrink-0 items-center gap-1">{chips}</span>
+        ) : null}
         <AgentStatusPill status={status} />
         <span className="min-w-0 flex-1" />
         {actions ? (
           <span className="flex shrink-0 items-center gap-0.5">{actions}</span>
         ) : null}
       </div>
-      <div className="flex h-4 items-center gap-1.5 pb-0.5 text-[10px] leading-none">
+      <div className="flex h-5 items-center gap-1.5 pb-1 text-[11px] leading-none">
         <span
           className={cn(
             "min-w-0 truncate",
@@ -141,7 +147,7 @@ export function AgentHeader({
           <>
             <span className="shrink-0 text-muted-foreground/30">·</span>
             <span
-              className="shrink-0 truncate text-muted-foreground/60 tabular-nums"
+              className="shrink-0 truncate text-muted-foreground tabular-nums"
               title={meta}
             >
               {meta}

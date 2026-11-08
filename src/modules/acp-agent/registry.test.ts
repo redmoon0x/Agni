@@ -28,6 +28,8 @@ describe("parseAcpRegistry", () => {
         id: "example-agent",
         distribution: {
           kind: "npx",
+          install: null,
+          download: null,
           installCommand: "npx --yes example-agent --acp",
         },
       }),

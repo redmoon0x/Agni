@@ -1,7 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { cn } from "@/lib/utils";
-import { AgentPanel } from "@/modules/agent-panel";
 import { EditorStack, GitDiffStack } from "@/modules/editor";
 import { GitHistoryStack } from "@/modules/git-history";
 import { HtmlPreviewStack } from "@/modules/html-preview";
@@ -10,7 +9,6 @@ import { MarkdownStack } from "@/modules/markdown";
 import { MediaPreviewStack } from "@/modules/media-preview";
 import { PreviewStack } from "@/modules/preview";
 import type { Tab } from "@/modules/tabs";
-import type { WorkspaceEnv } from "@/modules/workspace";
 
 type EditorStackProps = ComponentProps<typeof EditorStack>;
 type PreviewStackProps = ComponentProps<typeof PreviewStack>;
@@ -29,9 +27,6 @@ type Props = {
   onPreviewUrlChange: PreviewStackProps["onUrlChange"];
   onOpenCommitFile: GitHistoryStackProps["onOpenCommitFile"];
   onGitHistorySearchHandle: GitHistoryStackProps["onSearchHandle"];
-  agentCwd: string | null;
-  agentWorkspace: WorkspaceEnv;
-  onAgentOpenFile: (path: string, line?: number) => void;
 };
 
 /**
@@ -82,9 +77,6 @@ export function WorkspaceSurface({
   onPreviewUrlChange,
   onOpenCommitFile,
   onGitHistorySearchHandle,
-  agentCwd,
-  agentWorkspace,
-  onAgentOpenFile,
 }: Props) {
   const kind = activeTab?.kind;
   const isEditorTab = kind === "editor";
@@ -95,8 +87,6 @@ export function WorkspaceSurface({
   const isGitDiffTab = kind === "git-diff" || kind === "git-commit-file";
   const isGitHistoryTab = kind === "git-history";
   const isHttpClientTab = kind === "http-client";
-  const isAgentTab = kind === "agent";
-  const hasAgentTab = tabs.some((t) => t.kind === "agent");
 
   return (
     <div className="relative h-full min-h-0">
@@ -160,15 +150,6 @@ export function WorkspaceSurface({
       >
         <HttpClientStack tabs={tabs} activeId={activeId} />
       </TabPane>
-      {hasAgentTab ? (
-        <TabPane visible={isAgentTab} padded={false} label="Agent" resetKey={activeId}>
-          <AgentPanel
-            cwd={agentCwd}
-            workspace={agentWorkspace}
-            onOpenFile={onAgentOpenFile}
-          />
-        </TabPane>
-      ) : null}
     </div>
   );
 }

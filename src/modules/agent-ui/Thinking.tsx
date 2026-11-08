@@ -56,7 +56,7 @@ export function AgentThinking({
         />
         <span
           className={cn(
-            "shrink-0 text-[10px] font-medium",
+            "shrink-0 text-[12px] font-medium",
             streaming ? "text-primary" : "text-muted-foreground",
           )}
         >
@@ -65,7 +65,7 @@ export function AgentThinking({
         {open ? (
           <span className="flex-1" />
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/50">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
             {preview}
           </span>
         )}
@@ -81,7 +81,7 @@ export function AgentThinking({
       {open ? (
         <div
           ref={bodyRef}
-          className="max-h-64 overflow-y-auto overscroll-contain border-t border-border/40 px-2.5 py-2 text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground select-text"
+          className="max-h-64 overflow-y-auto overscroll-contain border-t border-border/40 px-2.5 py-2 text-[12px] leading-relaxed whitespace-pre-wrap text-muted-foreground select-text"
         >
           {text}
           {children}

@@ -4,7 +4,9 @@ import {
   Clock01Icon,
   FileEditIcon,
   Loading03Icon,
+  MaximizeScreenIcon,
   MoreHorizontalIcon,
+  PanelRightIcon,
   PowerIcon,
   RefreshIcon,
   Tick02Icon,
@@ -13,8 +15,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   type ClipboardEvent,
   type KeyboardEvent,
-  type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -42,6 +44,31 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { clipboardImageFiles } from "@/modules/agent-panel/lib/clipboardImages";
+import { recordPrompt, recallPrompt } from "@/modules/agent-ui/lib/promptHistory";
+import { redactSecrets } from "@/modules/agent-ui/lib/secrets";
+import { detectAtToken } from "@/modules/agent-ui/lib/tokens";
+import { groupToolRuns } from "@/modules/agent-ui/lib/groupToolRuns";
+import { AgentToolGroup } from "@/modules/agent-ui/ToolGroup";
+import { AgentTimelineMinimap } from "@/modules/agent-ui/TimelineMinimap";
+import { minimapMarkers } from "@/modules/agent-ui/lib/minimap";
+import { playCompletionSound } from "@/modules/agent-ui/lib/sounds";
+import {
+  forgetAgentTab,
+  reportAgentTabStatus,
+  tabStatusFromRun,
+} from "@/modules/agent-panel/lib/agentTabStatus";
+import {
+  defaultProfileFor,
+  profileEnvWire,
+} from "@/modules/agent-panel/lib/profile";
+import {
+  acquireProfile,
+  releaseProfile,
+} from "@/modules/agent-panel/lib/profileLock";
+import { AgentProfileChip } from "@/modules/agent-panel/AgentProfileChip";
+import { agentLabel } from "@/modules/agent-panel/lib/installedAgents";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import type { AgentPanelMode } from "@/modules/settings/store";
 import {
   formatContextUsage,
   formatCost,
@@ -120,8 +147,15 @@ import type { WorkspaceEnv } from "@/modules/workspace";
 type Props = {
   cwd: string | null;
   workspace: WorkspaceEnv;
-  agentPicker?: ReactNode;
   onOpenFile?: (path: string, line?: number) => void;
+  tabId?: number;
+  active?: boolean;
+  profileId?: string | null;
+  /** Replace this tab with another Pi account. */
+  onSwitchProfile?: (profileId: string) => void;
+  /** Full-workspace surface (focus) or the compact right dock. */
+  layoutMode: AgentPanelMode;
+  onToggleLayout: () => void;
 };
 
 function runPiAction(action: Promise<unknown>) {
@@ -237,22 +271,38 @@ function ToolRow({
 function Message({
   message,
   streaming,
+  onFork,
 }: {
   message: PiMessage;
   streaming?: boolean;
+  onFork?: (message: PiMessage) => void;
 }) {
   const text = messageText(message);
   const thinking = messageText(message, "thinking");
   if (!text && !thinking) return null;
   if (message.role === "user") {
-    return <AgentUserMessage text={text} />;
+    return (
+      <div className="group/user relative">
+        <AgentUserMessage text={text} />
+        {onFork ? (
+          <button
+            type="button"
+            onClick={() => onFork(message)}
+            title="Fork from this message"
+            className="absolute -top-2 right-1 rounded-md border border-border/50 bg-popover/95 px-1.5 py-1 text-[9px] text-muted-foreground opacity-0 shadow-sm backdrop-blur transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/user:opacity-100"
+          >
+            Fork
+          </button>
+        ) : null}
+      </div>
+    );
   }
   return (
     <div className="space-y-2">
       {thinking ? (
         <AgentThinking text={thinking} streaming={streaming && !text} />
       ) : null}
-      {text ? <AgentAssistantMessage text={text} /> : null}
+      {text ? <AgentAssistantMessage text={text} streaming={streaming} /> : null}
     </div>
   );
 }
@@ -368,19 +418,7 @@ function readImageAttachment(file: File): Promise<PiImageAttachment> {
   });
 }
 
-/** Finds the `@mention` token the caret is currently inside, if any -- the
- * `@` must start the input or follow whitespace, and no whitespace may sit
- * between it and the caret. */
-function detectAtToken(value: string, caret: number): AtToken | null {
-  const uptoCaret = value.slice(0, caret);
-  const at = uptoCaret.lastIndexOf("@");
-  if (at === -1) return null;
-  const before = uptoCaret[at - 1];
-  if (before !== undefined && !/\s/.test(before)) return null;
-  const query = uptoCaret.slice(at + 1);
-  if (/\s/.test(query)) return null;
-  return { query, start: at };
-}
+/** Finds the `@mention` token the caret is currently inside, if any. */
 
 function PiComposer({ root }: { root: string | null }) {
   const connection = usePiStore((state) => state.connection);
@@ -456,7 +494,7 @@ function PiComposer({ root }: { root: string | null }) {
     });
   };
 
-  const submit = async () => {
+  const submit = async (deliveryOverride?: DeliveryMode) => {
     if (
       (!input.trim() && attachments.length === 0) ||
       connection !== "ready" ||
@@ -464,7 +502,10 @@ function PiComposer({ root }: { root: string | null }) {
     ) {
       return;
     }
+    const delivery = deliveryOverride ?? deliveryMode;
     const message = input.trim() || "Analyze the attached image.";
+    const redaction = redactSecrets(message);
+    const safeMessage = redaction.text;
     const messageAttachments = attachments;
     setInput("");
     setAtToken(null);
@@ -472,14 +513,15 @@ function PiComposer({ root }: { root: string | null }) {
     setSending(true);
     try {
       if (session.isStreaming) {
-        if (deliveryMode === "followUp") {
-          await followUpPi(message, messageAttachments);
+        if (delivery === "followUp") {
+          await followUpPi(safeMessage, messageAttachments);
         } else {
-          await steerPi(message, messageAttachments);
+          await steerPi(safeMessage, messageAttachments);
         }
       } else {
-        await promptPi(message, messageAttachments);
+        await promptPi(safeMessage, messageAttachments);
       }
+      recordPrompt(`pi:${root ?? ""}`, safeMessage);
     } catch (error) {
       setInput(message);
       setAttachments(messageAttachments);
@@ -541,6 +583,33 @@ function PiComposer({ root }: { root: string | null }) {
     fileHits.length > 0 ? Math.min(atHighlight, fileHits.length - 1) : 0;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      session.isStreaming &&
+      event.key === "Enter" &&
+      event.shiftKey &&
+      (event.metaKey || event.ctrlKey)
+    ) {
+      event.preventDefault();
+      void submit("steer");
+      return;
+    }
+    if (
+      event.altKey &&
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      usePreferencesStore.getState().promptHistoryEnabled
+    ) {
+      const recalled = recallPrompt(
+        `pi:${root ?? ""}`,
+        input,
+        event.key === "ArrowUp" ? "prev" : "next",
+      );
+      if (recalled !== null) {
+        event.preventDefault();
+        setInput(recalled);
+        setAtToken(null);
+        return;
+      }
+    }
     if (atToken && fileHits.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -859,15 +928,21 @@ function ExtensionWidgets({
 function PiForkDialog({
   open,
   onOpenChange,
+  maxUserIndex,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Fork list is truncated to this user-message index (message-level fork). */
+  maxUserIndex: number | null;
 }) {
   const messages = usePiStore((state) => state.forkMessages);
 
   useEffect(() => {
     if (open) runPiAction(loadPiForkMessages());
   }, [open]);
+
+  const entries =
+    maxUserIndex === null ? messages : messages.slice(0, maxUserIndex + 1);
 
   return (
     <CommandDialog
@@ -878,12 +953,12 @@ function PiForkDialog({
       className="top-1/2 w-[min(480px,calc(100vw-32px))] -translate-y-1/2"
     >
       <div className="max-h-[360px] overflow-y-auto p-1">
-        {messages.length === 0 ? (
+        {entries.length === 0 ? (
           <p className="px-3 py-6 text-center text-[12px] text-muted-foreground">
             No messages available to fork from.
           </p>
         ) : (
-          messages.map((message) => (
+          entries.map((message) => (
             <button
               key={message.entryId}
               type="button"
@@ -1050,12 +1125,44 @@ function formatSessionCost(cost: number | undefined): string | null {
 export function PiPanel({
   cwd,
   workspace,
-  agentPicker,
   onOpenFile,
+  tabId,
+  active,
+  profileId,
+  onSwitchProfile,
+  layoutMode,
+  onToggleLayout,
 }: Props) {
   const state = usePiStore();
+  const profiles = usePreferencesStore((s) => s.agentProfiles);
+  const profileDefaults = usePreferencesStore((s) => s.agentDefaultProfile);
+  const profile = useMemo(() => {
+    if (profileId) {
+      const found = profiles.find((entry) => entry.id === profileId);
+      if (found) return found;
+    }
+    return defaultProfileFor(profiles, "pi", profileDefaults);
+  }, [profileDefaults, profileId, profiles]);
+  const profileEnv = useMemo(
+    () => (profile ? profileEnvWire(profile) : undefined),
+    [profile],
+  );
+  useEffect(() => {
+    if (!profileId) return;
+    acquireProfile(profileId);
+    return () => releaseProfile(profileId);
+  }, [profileId]);
+  const wasStreaming = useRef(false);
+  const soundsEnabled = usePreferencesStore((s) => s.promptSounds !== "off");
+  useEffect(() => {
+    if (wasStreaming.current && !state.session.isStreaming) {
+      playCompletionSound(soundsEnabled);
+    }
+    wasStreaming.current = state.session.isStreaming;
+  }, [soundsEnabled, state.session.isStreaming]);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const [forkMaxUserIndex, setForkMaxUserIndex] = useState<number | null>(null);
   const startRef = useRef(0);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [autoRetryEnabled, setAutoRetryEnabled] = useState(true);
@@ -1066,9 +1173,9 @@ export function PiPanel({
     const gen = ++startRef.current;
     void stopPi().then(() => {
       if (gen !== startRef.current) return;
-      void ensurePiStarted(cwd, workspace).catch(() => {});
+      void ensurePiStarted(cwd, workspace, profileEnv).catch(() => {});
     });
-  }, [cwd, workspace]);
+  }, [cwd, profileEnv, workspace]);
 
   useEffect(() => {
     const notification = state.extensionNotification;
@@ -1121,6 +1228,23 @@ export function PiPanel({
                 ? "idle"
                 : "ready";
 
+  useEffect(() => {
+    if (tabId === undefined) return;
+    reportAgentTabStatus({
+      tabId,
+      agent: "Pi",
+      status: tabStatusFromRun(runStatus),
+      active: active ?? true,
+    });
+  }, [active, runStatus, tabId]);
+
+  useEffect(
+    () => () => {
+      if (tabId !== undefined) forgetAgentTab(tabId);
+    },
+    [tabId],
+  );
+
   let subtitle =
     state.session.sessionName ??
     (state.connection === "ready" ? "Ready" : state.connection);
@@ -1142,18 +1266,81 @@ export function PiPanel({
       (b.sequence ?? Number.MAX_SAFE_INTEGER),
   );
 
+  const timeline = groupToolRuns(
+    items.map((item) =>
+      "role" in item
+        ? {
+            kind: "message" as const,
+            message: item,
+            sequence: item.sequence ?? Number.MAX_SAFE_INTEGER,
+          }
+        : {
+            kind: "tool" as const,
+            tool: item,
+            sequence: item.sequence ?? Number.MAX_SAFE_INTEGER,
+          },
+    ),
+    (tool) => toolKind(tool.name),
+  );
+
+  const openForkAt = (target: PiMessage) => {
+    const users = state.messages.filter((message) => message.role === "user");
+    const index = users.findIndex(
+      (message) =>
+        message.sequence === target.sequence &&
+        message.timestamp === target.timestamp,
+    );
+    setForkMaxUserIndex(index >= 0 ? index : null);
+    setForkDialogOpen(true);
+  };
+
+  const minimap = minimapMarkers(
+    timeline.map((item) =>
+      item.kind === "message"
+        ? { tone: item.message.role === "user" ? "user" : "agent" }
+        : {
+            tone: "tool",
+            error:
+              item.kind === "tool"
+                ? item.tool.status === "error"
+                : item.status === "error",
+          },
+    ),
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <AgentHeader
-        picker={agentPicker}
         mark={<PiLogoIcon size={14} />}
-        label="PI"
+        label={agentLabel("pi")}
+        chips={
+          <AgentProfileChip
+            agent="pi"
+            profileId={profileId}
+            onSwitchProfile={onSwitchProfile}
+          />
+        }
         status={runStatus}
         subtitle={subtitle}
         subtitleTone={subtitleTone}
         meta={meta}
         actions={
           <>
+            <AgentIconButton
+              label={
+                layoutMode === "focus"
+                  ? "Dock agent on the right"
+                  : "Full screen agent"
+              }
+              onClick={onToggleLayout}
+            >
+              <HugeiconsIcon
+                icon={
+                  layoutMode === "focus" ? PanelRightIcon : MaximizeScreenIcon
+                }
+                size={15}
+              />
+            </AgentIconButton>
             {extensionStatus ? (
               <span
                 className="max-w-28 truncate text-[10px] text-muted-foreground"
@@ -1199,7 +1386,10 @@ export function PiPanel({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={state.session.isStreaming}
-                  onSelect={() => setForkDialogOpen(true)}
+                  onSelect={() => {
+                    setForkMaxUserIndex(null);
+                    setForkDialogOpen(true);
+                  }}
                 >
                   Fork from message
                 </DropdownMenuItem>
@@ -1291,6 +1481,7 @@ export function PiPanel({
             <PiForkDialog
               open={forkDialogOpen}
               onOpenChange={setForkDialogOpen}
+              maxUserIndex={forkMaxUserIndex}
             />
             <RenameSessionDialog
               open={renameDialogOpen}
@@ -1301,7 +1492,12 @@ export function PiPanel({
         }
       />
 
-      <AgentConversation>
+      <AgentConversation
+        busy={state.session.isStreaming}
+        minimap={(controls) => (
+          <AgentTimelineMinimap markers={minimap} onJump={controls.jumpToFraction} />
+        )}
+      >
         {state.connection === "starting" ? (
           <AgentEmptyState
             mark={
@@ -1343,22 +1539,41 @@ export function PiPanel({
           />
         ) : (
           <div className="space-y-4">
-            {items.map((item, index) =>
-              "role" in item ? (
+            {timeline.map((item, index) =>
+              item.kind === "message" ? (
                 <Message
-                  key={`${item.role}-${item.timestamp ?? item.sequence ?? item}`}
-                  message={item}
+                  key={`${item.message.role}-${item.message.timestamp ?? item.message.sequence ?? index}`}
+                  message={item.message}
                   streaming={
-                    state.session.isStreaming && index === items.length - 1
+                    state.session.isStreaming && index === timeline.length - 1
+                  }
+                  onFork={
+                    item.message.role === "user" ? openForkAt : undefined
                   }
                 />
-              ) : (
+              ) : item.kind === "tool" ? (
                 <ToolRow
-                  key={item.id}
-                  tool={item}
+                  key={item.tool.id}
+                  tool={item.tool}
                   cwd={cwd}
                   onOpenPath={onOpenFile}
                 />
+              ) : (
+                <AgentToolGroup
+                  key={item.id}
+                  label={item.label}
+                  status={item.status}
+                  count={item.tools.length}
+                >
+                  {item.tools.map((tool) => (
+                    <ToolRow
+                      key={tool.id}
+                      tool={tool}
+                      cwd={cwd}
+                      onOpenPath={onOpenFile}
+                    />
+                  ))}
+                </AgentToolGroup>
               ),
             )}
           </div>

@@ -19,7 +19,6 @@ import {
 import { WindowControls } from "@/components/WindowControls";
 import { IS_MAC, KEY_SEP, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { NotificationBell } from "@/modules/agents";
-import { AgentIcon } from "@/modules/agent-panel/AgentIcon";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   getBindingTokens,
@@ -47,8 +46,6 @@ type Props = {
   /** Promote a preview (transient) tab to persistent. */
   onPin: (id: number) => void;
   onToggleSidebar: () => void;
-  onToggleAgentPanel: () => void;
-  agentPanelOpen: boolean;
   onToggleDock: () => void;
   dockOpen: boolean;
   onSplitDock: (dir: "row" | "col") => void;
@@ -75,8 +72,6 @@ export function Header({
   onClose,
   onPin,
   onToggleSidebar,
-  onToggleAgentPanel,
-  agentPanelOpen,
   onToggleDock,
   dockOpen,
   onSplitDock,
@@ -87,7 +82,6 @@ export function Header({
   searchTarget,
   searchRef,
 }: Props) {
-  const activeAgent = usePreferencesStore((state) => state.agentPanelAgent);
   const rootRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   const userShortcuts = usePreferencesStore((s) => s.shortcuts);
@@ -143,22 +137,6 @@ export function Header({
         size={15}
         strokeWidth={1.75}
       />
-    </Button>
-  );
-
-  const agentPanelButton = (
-    <Button
-      variant="ghost"
-      size="icon"
-      className={`size-7 shrink-0 rounded-md hover:bg-accent hover:text-foreground ${
-        agentPanelOpen ? "bg-accent text-foreground" : "text-muted-foreground"
-      }`}
-      onClick={onToggleAgentPanel}
-      title="Toggle agent panel"
-      aria-label="Toggle agent panel"
-      aria-pressed={agentPanelOpen}
-    >
-      <AgentIcon agent={activeAgent} size={15} />
     </Button>
   );
 
@@ -239,9 +217,7 @@ export function Header({
 
       {IS_MAC && <span className="mr-1 h-full w-px shrink-0 bg-border" />}
 
-      <div
-        className="flex min-w-0 flex-1 items-center gap-2"
-      >
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <TabBar
           tabs={tabs}
           activeId={activeId}
@@ -264,7 +240,6 @@ export function Header({
         <>
           <NotificationBell onActivate={onActivateAgent} />
           {terminalButton}
-          {agentPanelButton}
           {settingsButton}
         </>
       )}
@@ -272,7 +247,6 @@ export function Header({
       {!IS_MAC && (
         <>
           {terminalButton}
-          {agentPanelButton}
           {settingsButton}
         </>
       )}
