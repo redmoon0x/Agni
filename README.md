@@ -3,8 +3,8 @@
   <h1>Agni</h1>
   <p><strong>A fast, lightweight code editor with a native terminal and Pi built in.</strong></p>
   <p>
-    <a href="https://github.com/deviprasadshetty-dev/Agni">
-      <img src="https://img.shields.io/badge/github-devi--agni-blue" alt="github" />
+    <a href="https://github.com/redmoon0x/Agni">
+      <img src="https://img.shields.io/badge/github-redmoon0x-blue" alt="github" />
     </a>
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="platform" />
   </p>
