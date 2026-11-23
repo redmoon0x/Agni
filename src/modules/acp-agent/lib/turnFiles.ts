@@ -31,6 +31,37 @@ export function countPatchLines(patch: string | null): {
   return { insertions, deletions };
 }
 
+/**
+ * Fallback counts when an agent sends old/new text but no unified patch:
+ * lines present only in the new text are insertions, only in the old are
+ * deletions. Approximate for reordering, exact for appends and rewrites.
+ */
+export function countTextChanges(
+  oldText: string | null,
+  newText: string | null,
+): { insertions: number; deletions: number } {
+  const split = (value: string | null) =>
+    value && value.length > 0 ? value.split("\n") : [];
+  const oldLines = split(oldText);
+  const newLines = split(newText);
+  if (oldLines.length === 0 && newLines.length === 0) {
+    return { insertions: 0, deletions: 0 };
+  }
+  if (oldLines.length === 0) return { insertions: newLines.length, deletions: 0 };
+  if (newLines.length === 0) return { insertions: 0, deletions: oldLines.length };
+  const counts = new Map<string, number>();
+  for (const line of oldLines) counts.set(line, (counts.get(line) ?? 0) + 1);
+  let additions = 0;
+  for (const line of newLines) {
+    const left = counts.get(line) ?? 0;
+    if (left > 0) counts.set(line, left - 1);
+    else additions += 1;
+  }
+  let deletions = 0;
+  for (const value of counts.values()) deletions += value;
+  return { insertions: additions, deletions };
+}
+
 type Event =
   | { sequence: number; kind: "message"; message: AcpMessage }
   | { sequence: number; kind: "tool"; tool: AcpToolCall };
@@ -44,7 +75,9 @@ function addFiles(target: Map<string, TurnFile>, tool: AcpToolCall): void {
       content.changes.find((change) => change.path)?.path ||
       "";
     if (!path) continue;
-    const counts = countPatchLines(content.patch);
+    const counts = content.patch
+      ? countPatchLines(content.patch)
+      : countTextChanges(content.oldText, content.newText);
     const existing = target.get(path);
     if (existing) {
       existing.insertions += counts.insertions;

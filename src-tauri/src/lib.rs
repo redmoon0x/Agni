@@ -1,7 +1,7 @@
 pub mod modules;
 
 use modules::{
-    acp, acp_registry, acp_terminal, agent, format, fs, git, http, pets, pi, pick_folder,
+    acp, acp_registry, acp_terminal, agent, format, fs, git, github, http, pets, pi, pick_folder,
     profile_lock, profile_probe, profile_storage, pty, secrets, shell, usage, workspace,
 };
 use std::sync::Mutex;
@@ -229,6 +229,7 @@ pub fn run() {
             pi::pi_close_all,
             pi::pi_list_sessions,
             acp::acp_start,
+            acp::acp_omp_mcp_config,
             acp::acp_send,
             acp::acp_stop,
             acp::acp_close_all,
@@ -305,6 +306,9 @@ pub fn run() {
             git::commands::git_commit_files,
             git::commands::git_commit_file_diff,
             git::commands::git_remote_url,
+            github::github_available,
+            github::github_pr_status,
+            github::github_pr_create,
             shell::shell_run_command,
             shell::run_stdin_command,
             format::format_text,

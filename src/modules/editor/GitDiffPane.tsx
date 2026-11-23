@@ -12,9 +12,11 @@ import {
   fetchCommitDiff,
   fetchWorkingDiff,
   getCachedDiff,
+  invalidateDiff,
   workingDiffKey,
   commitDiffKey,
 } from "./lib/diffCache";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { resolveLanguage, resolveLanguageSync } from "./lib/languageResolver";
 import { EDITOR_THEME_EXT } from "./lib/themes";
 
@@ -134,6 +136,41 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
   );
 
   const key = cacheKey(source);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  // Re-read the diff when this file changes on disk (editor save, agent write).
+  useEffect(() => {
+    if (!active) return;
+    const root = source.repoRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    const rel = source.path.replace(/\\/g, "/").replace(/^\/+/, "");
+    const target = `${root}/${rel}`;
+    const unlisteners: Array<() => void> = [];
+    let alive = true;
+    const onPaths = (paths: string[]) => {
+      if (!paths.some((p) => p.replace(/\\/g, "/") === target)) return;
+      invalidateDiff(key);
+      setReloadToken((value) => value + 1);
+    };
+    const attach = (event: string, read: (payload: unknown) => string[]) => {
+      void getCurrentWebviewWindow()
+        .listen(event, (e) => onPaths(read(e.payload)))
+        .then((un) => (alive ? unlisteners.push(un) : un()));
+    };
+    attach("fs:file-written", (payload) => {
+      const path = (payload as { path?: unknown } | null)?.path;
+      return typeof path === "string" ? [path] : [];
+    });
+    attach("fs:changed", (payload) => {
+      const paths = (payload as { paths?: unknown } | null)?.paths;
+      return Array.isArray(paths)
+        ? paths.filter((p): p is string => typeof p === "string")
+        : [];
+    });
+    return () => {
+      alive = false;
+      for (const un of unlisteners) un();
+    };
+  }, [active, key, source.repoRoot, source.path]);
 
   useEffect(() => {
     if (!active) return;
@@ -182,7 +219,7 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [active, key, source]);
+  }, [active, key, reloadToken, source]);
 
   const path = source.path;
   const repoRoot = source.repoRoot;

@@ -2,7 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
 use crate::modules::git::errors::{GitError, Result};
-use crate::modules::git::parser::parse_porcelain_v2;
+use crate::modules::git::parser::{parse_numstat_z, parse_porcelain_v2, PorcelainV2};
 use crate::modules::git::process::{
     ensure_git_available, ensure_success, git_show_text, git_stdout_line_opt, git_stdout_lines,
     read_text_file, run_git,
@@ -334,7 +334,8 @@ fn status_inner(repo_root: &ResolvedGitDirectory) -> Result<GitStatusSnapshot> {
     ensure_success(&output, "git status failed")?;
 
     let stdout = std::str::from_utf8(&output.stdout).unwrap_or("");
-    let parsed = parse_porcelain_v2(stdout);
+    let mut parsed = parse_porcelain_v2(stdout);
+    merge_numstat(repo_root, &mut parsed);
 
     Ok(GitStatusSnapshot {
         repo_root: repo_root.git_path.clone(),
@@ -346,6 +347,45 @@ fn status_inner(repo_root: &ResolvedGitDirectory) -> Result<GitStatusSnapshot> {
         truncated: output.truncated,
         changed_files: parsed.files,
     })
+}
+
+/// Attach added/removed line counts. `HEAD` covers staged and unstaged changes;
+/// a repository with no commits falls back to the worktree-vs-index diff.
+fn merge_numstat(repo_root: &ResolvedGitDirectory, parsed: &mut PorcelainV2) {
+    let stats = numstat(repo_root, true)
+        .or_else(|| numstat(repo_root, false))
+        .unwrap_or_default();
+    if stats.is_empty() {
+        return;
+    }
+    for file in &mut parsed.files {
+        if let Some((additions, deletions)) = stats.get(&file.path) {
+            file.additions = *additions;
+            file.deletions = *deletions;
+        }
+    }
+}
+
+fn numstat(
+    repo_root: &ResolvedGitDirectory,
+    against_head: bool,
+) -> Option<std::collections::HashMap<String, (u32, u32)>> {
+    let mut args: Vec<OsString> = vec!["diff".into(), "--numstat".into(), "-z".into()];
+    if against_head {
+        args.push("HEAD".into());
+    }
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        args,
+        DEFAULT_TIMEOUT_SECS,
+    )
+    .ok()?;
+    if output.exit_code != Some(0) {
+        return None;
+    }
+    let stdout = std::str::from_utf8(&output.stdout).ok()?;
+    Some(parse_numstat_z(stdout))
 }
 
 pub fn diff(

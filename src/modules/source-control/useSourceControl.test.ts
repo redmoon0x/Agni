@@ -1,8 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
   getSourceControlRemoteIndicator,
+  isWithinPath,
+  normalizePath,
   resolvePullStrategy,
 } from "@/modules/source-control/useSourceControl";
+
+describe("isWithinPath", () => {
+  it("matches across backslash and forward-slash spellings", () => {
+    expect(isWithinPath("D:/Agni", "D:\\Agni\\src\\App.tsx")).toBe(true);
+    expect(isWithinPath("D:/Agni", "D:/Agni/src/App.tsx")).toBe(true);
+    expect(isWithinPath("D:/Agni", "D:/Agni")).toBe(true);
+  });
+
+  it("rejects siblings and case/path prefixes it should not own", () => {
+    expect(isWithinPath("D:/Agni", "D:/AgniX/src/a.ts")).toBe(false);
+    expect(isWithinPath("D:/Agni", "D:/Other/a.ts")).toBe(false);
+  });
+
+  it("normalizes trailing separators", () => {
+    expect(normalizePath("D:\\Agni\\src\\")).toBe("D:/Agni/src");
+  });
+});
 
 describe("resolvePullStrategy", () => {
   it("fast-forwards a branch that is only behind", () => {

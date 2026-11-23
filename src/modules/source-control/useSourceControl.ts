@@ -4,12 +4,31 @@ import {
   type GitStatusSnapshot,
   type PullStrategy,
 } from "@/lib/native";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  invalidateDiff,
+  workingDiffKey,
+} from "@/modules/editor/lib/diffCache";
 import { useWorkspaceEnvStore, workspaceScopeKey } from "@/modules/workspace";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AUTO_FETCH_THROTTLE_MS = 5 * 60_000;
 const AUTO_FETCH_LRU_LIMIT = 16;
 const FOCUS_REFRESH_MIN_INTERVAL_MS = 1500;
+/** Active git views poll so agent/terminal edits show without a focus change. */
+const ACTIVE_POLL_MS = 3000;
+/** Coalesce the burst of events a single save or checkout produces. */
+const FS_REFRESH_DEBOUNCE_MS = 250;
+
+export function normalizePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/** True when `path` is `root` or lives under it, across native and git spellings. */
+export function isWithinPath(root: string, path: string): boolean {
+  const candidate = normalizePath(path);
+  return candidate === root || candidate.startsWith(`${root}/`);
+}
 
 export type SourceControlRefreshMode = "auto" | "always" | "never";
 export type SourceControlRemoteAction = "fetch" | "pull" | "push";
@@ -171,7 +190,9 @@ function touchAutoFetch(map: Map<string, number>, key: string): void {
 export function useSourceControl(
   contextPath: string | null,
   enabled: boolean = true,
+  options?: { active?: boolean },
 ): SourceControlSummary {
+  const active = options?.active ?? false;
   const workspaceEnv = useWorkspaceEnvStore((s) => s.env);
   const workspaceKey = workspaceScopeKey(workspaceEnv);
   const [state, setState] = useState<SourceControlSummaryState>({
@@ -188,9 +209,12 @@ export function useSourceControl(
   const requestIdRef = useRef(0);
   const inflightRef = useRef<Promise<void> | null>(null);
   const inflightModeRef = useRef<SourceControlRefreshMode>("never");
+  const pendingModeRef = useRef<SourceControlRefreshMode | null>(null);
   const autoFetchByRepoRef = useRef(new Map<string, number>());
   const enabledRef = useRef(enabled);
+  const activeRef = useRef(active);
   const lastRefreshAtRef = useRef(0);
+  const fsRefreshTimerRef = useRef(0);
 
   useEffect(() => {
     stateRef.current = state;
@@ -199,6 +223,10 @@ export function useSourceControl(
   useEffect(() => {
     enabledRef.current = enabled;
   }, [enabled]);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   useEffect(() => {
     requestIdRef.current++;
@@ -249,9 +277,9 @@ export function useSourceControl(
       }
 
       const activeRoot = stateRef.current.repo?.repoRoot ?? null;
+      // Git reports forward slashes; the context path may be a native path.
       const reusableRoot =
-        activeRoot &&
-        (contextPath === activeRoot || contextPath.startsWith(`${activeRoot}/`))
+        activeRoot && isWithinPath(normalizePath(activeRoot), contextPath)
           ? activeRoot
           : undefined;
 
@@ -354,14 +382,24 @@ export function useSourceControl(
         }));
       } catch (error) {
         if (requestId !== requestIdRef.current) return;
-        setState((current) => ({
-          ...current,
-          repo: null,
-          hasRepo: false,
-          status: null,
-          isLoading: false,
-          localError: normalizeError(error),
-        }));
+        // A transient failure (index lock, a competing git op) must not blank
+        // the panel; keep the last good snapshot and surface the error.
+        setState((current) =>
+          current.repo
+            ? {
+                ...current,
+                isLoading: false,
+                localError: normalizeError(error),
+              }
+            : {
+                ...current,
+                repo: null,
+                hasRepo: false,
+                status: null,
+                isLoading: false,
+                localError: normalizeError(error),
+              },
+        );
       } finally {
         lastRefreshAtRef.current = Date.now();
       }
@@ -369,28 +407,44 @@ export function useSourceControl(
     [contextPath, workspaceKey],
   );
 
-  const refresh = useCallback(
-    async (options?: { remote?: SourceControlRefreshMode }) => {
-      const remoteMode = options?.remote ?? "never";
-      const inflight = inflightRef.current;
-      if (inflight) {
-        const cur = inflightModeRef.current;
-        const upgrade =
-          (cur === "never" && remoteMode !== "never") ||
-          (cur === "auto" && remoteMode === "always");
-        if (!upgrade) return inflight;
-      }
+  const runRefresh = useCallback(
+    (remoteMode: SourceControlRefreshMode): Promise<void> => {
+      if (inflightRef.current) return inflightRef.current;
       inflightModeRef.current = remoteMode;
       const run = doRefresh(remoteMode).finally(() => {
         if (inflightRef.current === run) {
           inflightRef.current = null;
           inflightModeRef.current = "never";
         }
+        // A read requested while this one ran must not be lost: read again now.
+        const pending = pendingModeRef.current;
+        pendingModeRef.current = null;
+        if (pending !== null) void runRefresh(pending);
       });
       inflightRef.current = run;
       return run;
     },
     [doRefresh],
+  );
+
+  const refresh = useCallback(
+    async (options?: { remote?: SourceControlRefreshMode }) => {
+      const remoteMode = options?.remote ?? "never";
+      const inflight = inflightRef.current;
+      if (inflight) {
+        // Coalesce into one follow-up read; a stronger mode wins.
+        const queued = pendingModeRef.current;
+        pendingModeRef.current =
+          queued === "always" || remoteMode === "always"
+            ? "always"
+            : queued === "never" || remoteMode === "never"
+              ? "never"
+              : remoteMode;
+        return inflight;
+      }
+      return runRefresh(remoteMode);
+    },
+    [runRefresh],
   );
 
   const runRemoteAction = useCallback(
@@ -524,6 +578,72 @@ export function useSourceControl(
       if (timer) window.clearTimeout(timer);
     };
   }, [refresh, enabled]);
+
+  const onDiskChangeRef = useRef<(paths: string[]) => void>(() => {});
+  onDiskChangeRef.current = (paths) => {
+    const repoRoot = stateRef.current.repo?.repoRoot;
+    if (!repoRoot) return;
+    const root = normalizePath(repoRoot);
+    let touched = false;
+    for (const raw of paths) {
+      if (!isWithinPath(root, raw)) continue;
+      touched = true;
+      // The open diff for this file is now stale.
+      const rel = normalizePath(raw).slice(root.length).replace(/^\/+/, "");
+      invalidateDiff(workingDiffKey(repoRoot, rel, "-"));
+      invalidateDiff(workingDiffKey(repoRoot, rel, "+"));
+    }
+    if (!touched) return;
+    if (fsRefreshTimerRef.current) window.clearTimeout(fsRefreshTimerRef.current);
+    fsRefreshTimerRef.current = window.setTimeout(() => {
+      fsRefreshTimerRef.current = 0;
+      void refresh({ remote: "never" });
+    }, FS_REFRESH_DEBOUNCE_MS);
+  };
+
+  // React to writes the app makes (editor saves, replacements) and to watched
+  // directory changes so the change list is never left stale mid-session.
+  useEffect(() => {
+    if (!enabled) return;
+    const unlisten: Array<() => void> = [];
+    let alive = true;
+    const attach = (event: string, read: (payload: unknown) => string[]) => {
+      void getCurrentWebviewWindow()
+        .listen(event, (e) => onDiskChangeRef.current(read(e.payload)))
+        .then((un) => (alive ? unlisten.push(un) : un()));
+    };
+    attach("fs:file-written", (payload) => {
+      const path = (payload as { path?: unknown } | null)?.path;
+      return typeof path === "string" ? [path] : [];
+    });
+    attach("fs:changed", (payload) => {
+      const paths = (payload as { paths?: unknown } | null)?.paths;
+      return Array.isArray(paths)
+        ? paths.filter((p): p is string => typeof p === "string")
+        : [];
+    });
+    return () => {
+      alive = false;
+      for (const un of unlisten) un();
+      if (fsRefreshTimerRef.current) {
+        window.clearTimeout(fsRefreshTimerRef.current);
+        fsRefreshTimerRef.current = 0;
+      }
+    };
+  }, [enabled]);
+
+  // While a git view is on screen, poll so changes made outside the app's
+  // write path (agent tools, a shell) still appear without a focus change.
+  useEffect(() => {
+    if (!enabled || !active) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const { busyAction, isLoading } = stateRef.current;
+      if (busyAction !== null || isLoading) return;
+      void refresh({ remote: "never" });
+    }, ACTIVE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [active, enabled, refresh]);
 
   return useMemo<SourceControlSummary>(
     () => ({

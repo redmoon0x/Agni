@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acpTurnFiles,
   countPatchLines,
+  countTextChanges,
 } from "@/modules/acp-agent/lib/turnFiles";
 import type { AcpMessage, AcpToolCall } from "@/modules/acp-agent/types";
 
@@ -53,6 +54,36 @@ describe("countPatchLines", () => {
 
   it("returns zeros without a patch", () => {
     expect(countPatchLines(null)).toEqual({ insertions: 0, deletions: 0 });
+  });
+});
+
+describe("countTextChanges", () => {
+  it("counts a new file as pure insertions", () => {
+    expect(countTextChanges(null, "a\nb\nc")).toEqual({
+      insertions: 3,
+      deletions: 0,
+    });
+  });
+
+  it("counts removed content as deletions", () => {
+    expect(countTextChanges("a\nb", "")).toEqual({
+      insertions: 0,
+      deletions: 2,
+    });
+  });
+
+  it("counts edited lines on both sides", () => {
+    expect(countTextChanges("keep\nold", "keep\nnew\nextra")).toEqual({
+      insertions: 2,
+      deletions: 1,
+    });
+  });
+
+  it("is zero for empty inputs", () => {
+    expect(countTextChanges(null, null)).toEqual({
+      insertions: 0,
+      deletions: 0,
+    });
   });
 });
 

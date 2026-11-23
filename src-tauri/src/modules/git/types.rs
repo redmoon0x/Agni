@@ -27,6 +27,9 @@ pub struct GitChangedFile {
     pub unstaged: bool,
     pub untracked: bool,
     pub status_label: String,
+    /// Added/removed lines versus HEAD, from `git diff --numstat`.
+    pub additions: u32,
+    pub deletions: u32,
 }
 
 #[derive(Serialize)]

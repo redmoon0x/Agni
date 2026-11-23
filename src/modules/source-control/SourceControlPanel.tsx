@@ -33,7 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { IS_MAC } from "@/lib/platform";
-import type { PullStrategy } from "@/lib/native";
+import type { GithubChecks, PullStrategy } from "@/lib/native";
 import { cn } from "@/lib/utils";
 import {
   copyToClipboard,
@@ -60,6 +60,16 @@ import {
   RemoveSquareIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   memo,
@@ -77,6 +87,8 @@ import {
   type SourceControlEntry,
 } from "./useSourceControlPanel";
 import { BranchSwitcher } from "./BranchSwitcher";
+import { checksTone, pullRequestSummary } from "./lib/github";
+import { useGithub } from "./useGithub";
 
 type Props = {
   open: boolean;
@@ -159,6 +171,19 @@ function upstreamBadgeLabel(upstream: string | null | undefined): string {
   return upstream;
 }
 
+function checksDotClass(checks: GithubChecks): string {
+  switch (checksTone(checks)) {
+    case "failed":
+      return "bg-rose-500";
+    case "pending":
+      return "bg-amber-500";
+    case "passed":
+      return "bg-emerald-500";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
 function statusAccent(code: string): string {
   switch (code) {
     case "A":
@@ -190,6 +215,41 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [branchSwitcherOpen, setBranchSwitcherOpen] = useState(false);
+  const githubBranch = scm.status?.isDetached
+    ? null
+    : (scm.status?.branch ?? null);
+  const github = useGithub(
+    sourceControl.repo?.repoRoot ?? null,
+    githubBranch,
+    open,
+  );
+  const [prDialogOpen, setPrDialogOpen] = useState(false);
+  const [prTitle, setPrTitle] = useState("");
+  const [prBody, setPrBody] = useState("");
+  const [prDraft, setPrDraft] = useState(false);
+  const [prError, setPrError] = useState<string | null>(null);
+
+  const openCreatePr = useCallback(() => {
+    setPrTitle(scm.commitMessage.trim() || githubBranch || "");
+    setPrBody("");
+    setPrDraft(false);
+    setPrError(null);
+    setPrDialogOpen(true);
+  }, [githubBranch, scm.commitMessage]);
+
+  const submitCreatePr = useCallback(async () => {
+    try {
+      await github.create({
+        title: prTitle,
+        body: prBody,
+        base: null,
+        draft: prDraft,
+      });
+      setPrDialogOpen(false);
+    } catch (caught) {
+      setPrError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, [github, prBody, prDraft, prTitle]);
 
   useEffect(() => {
     return () => {
@@ -551,6 +611,37 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                 detached
               </span>
             ) : null}
+            {github.pullRequest ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const url = github.pullRequest?.url;
+                  if (url) void openUrl(url).catch(() => {});
+                }}
+                title={`${pullRequestSummary(github.pullRequest)} · ${github.pullRequest.title}`}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    checksDotClass(github.pullRequest.checks),
+                  )}
+                />
+                #{github.pullRequest.number}
+              </button>
+            ) : github.availability?.installed &&
+              github.availability.authenticated &&
+              githubBranch ? (
+              <button
+                type="button"
+                onClick={openCreatePr}
+                title="Create a pull request with the GitHub CLI"
+                className="shrink-0 rounded-md border border-border/60 px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              >
+                Create PR
+              </button>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
             <IconActionButton
@@ -822,6 +913,68 @@ export const SourceControlPanel = memo(function SourceControlPanel({
         onOpenChange={setBranchSwitcherOpen}
         onChanged={handleBranchChanged}
       />
+
+      <Dialog open={prDialogOpen} onOpenChange={setPrDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create pull request</DialogTitle>
+            <DialogDescription>
+              {githubBranch
+                ? `Opens a pull request from ${githubBranch} with your GitHub CLI login.`
+                : "Opens a pull request with your GitHub CLI login."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Input
+              value={prTitle}
+              onChange={(event) => setPrTitle(event.target.value)}
+              placeholder="Pull request title"
+              aria-label="Pull request title"
+            />
+            <Textarea
+              value={prBody}
+              onChange={(event) => setPrBody(event.target.value)}
+              placeholder="Description (optional)"
+              aria-label="Pull request description"
+              className="min-h-24"
+            />
+            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={prDraft}
+                onChange={(event) => setPrDraft(event.target.checked)}
+                className="size-3.5 accent-[var(--primary)]"
+              />
+              Create as draft
+            </label>
+            {prError ? (
+              <p className="whitespace-pre-wrap text-[11px] text-destructive">
+                {prError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px]"
+              onClick={() => setPrDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 text-[11px]"
+              disabled={!prTitle.trim() || github.creating}
+              onClick={() => void submitCreatePr()}
+            >
+              {github.creating ? "Creating…" : "Create pull request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={scm.pendingDiscard !== null}
@@ -1238,6 +1391,17 @@ const EntryRow = memo(function EntryRow({
               ) : null}
             </div>
           </button>
+
+          {entry.additions + entry.deletions > 0 ? (
+            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[9px] tabular-nums leading-none">
+              {entry.additions > 0 ? (
+                <span className="text-emerald-500">+{entry.additions}</span>
+              ) : null}
+              {entry.deletions > 0 ? (
+                <span className="text-destructive">-{entry.deletions}</span>
+              ) : null}
+            </span>
+          ) : null}
 
           {showDiscard ? (
             <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 data-[focused=true]:opacity-100 data-[selected=true]:opacity-100">

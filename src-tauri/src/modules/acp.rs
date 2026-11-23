@@ -1,6 +1,6 @@
 use std::io::Write;
-#[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::io::Read;
 use std::process::{ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,9 +15,10 @@ use tauri::ipc::Channel;
 use crate::modules::jsonl::{
     read_lf_records, MAX_OUTBOUND_PROTOCOL_RECORD_BYTES, MAX_PROTOCOL_RECORD_BYTES,
 };
-use crate::modules::workspace::{authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
+use crate::modules::workspace::{authorize_spawn_cwd, authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 
 const MAX_STDERR_LINE_BYTES: usize = 16 * 1024;
+const MAX_OMP_MCP_CONFIG_BYTES: u64 = 1024 * 1024;
 const ACP_REGISTRY_URL: &str =
     "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const ACP_REGISTRY_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -576,6 +577,132 @@ pub async fn acp_start(
         command,
         on_event,
     )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpMcpConfig {
+    user: Value,
+    project: Value,
+}
+
+fn read_omp_mcp_file(path: &Path) -> Result<Value, String> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
+        Err(error) => return Err(format!("Cannot read OMP MCP config {}: {error}", path.display())),
+    };
+    if file.metadata().map_err(|error| error.to_string())?.len() > MAX_OMP_MCP_CONFIG_BYTES {
+        return Err(format!("OMP MCP config {} exceeds 1 MiB", path.display()));
+    }
+    let mut content = Vec::new();
+    file.take(MAX_OMP_MCP_CONFIG_BYTES + 1)
+        .read_to_end(&mut content)
+        .map_err(|error| format!("Cannot read OMP MCP config {}: {error}", path.display()))?;
+    if content.len() as u64 > MAX_OMP_MCP_CONFIG_BYTES {
+        return Err(format!("OMP MCP config {} exceeds 1 MiB", path.display()));
+    }
+    let config: Value = serde_json::from_slice(&content)
+        .map_err(|error| format!("Invalid OMP MCP config {}: {error}", path.display()))?;
+    if !config.is_object() {
+        return Err(format!("Invalid OMP MCP config {}: expected an object", path.display()));
+    }
+    Ok(config)
+}
+
+fn expand_omp_mcp_env(value: &mut Value, env: &[(String, String)]) {
+    match value {
+        Value::String(text) => {
+            let original = text.clone();
+            let mut expanded = String::new();
+            let mut rest = original.as_str();
+            while let Some(start) = rest.find("${") {
+                expanded.push_str(&rest[..start]);
+                let candidate = &rest[start + 2..];
+                let Some(end) = candidate.find('}') else { rest = &rest[start..]; break; };
+                let expression = &candidate[..end];
+                let (name, fallback) = expression.split_once(":-").map_or((expression, None), |(key, default)| (key, Some(default)));
+                let resolved = env.iter().rev().find(|(key, _)| key == name).map(|(_, value)| value.clone())
+                    .or_else(|| std::env::var(name).ok());
+                match resolved {
+                    Some(value) if !value.is_empty() || fallback.is_none() => expanded.push_str(&value),
+                    _ => expanded.push_str(fallback.unwrap_or(&rest[start..start + 2 + end + 1])),
+                }
+                rest = &candidate[end + 1..];
+            }
+            expanded.push_str(rest);
+            *text = expanded;
+        }
+        Value::Array(items) => { for item in items { expand_omp_mcp_env(item, env); } }
+        Value::Object(items) => { for item in items.values_mut() { expand_omp_mcp_env(item, env); } }
+        _ => {}
+    }
+}
+
+fn omp_agent_dir(env: &[(String, String)], args: &[String]) -> Result<PathBuf, String> {
+    let value = |name: &str| env.iter().rev().find(|(key, _)| key == name).map(|(_, value)| value.clone())
+        .or_else(|| std::env::var(name).ok());
+    let profile = args.windows(2).find(|pair| pair[0] == "--profile").map(|pair| pair[1].clone())
+        .or_else(|| args.iter().find_map(|arg| arg.strip_prefix("--profile=").map(str::to_owned)))
+        .or_else(|| value("OMP_PROFILE")).or_else(|| value("PI_PROFILE"));
+    let home = dirs::home_dir().ok_or("Cannot find the home directory for OMP MCP config")?;
+    let profile = profile.filter(|name| !name.is_empty() && name != "default");
+    if let Some(name) = &profile {
+        if name.len() > 64 || !name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            || name.ends_with('.') || !name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.'))
+            || matches!(name.split('.').next().unwrap_or("").to_ascii_lowercase().as_str(), "con" | "prn" | "aux" | "nul" | "com0" | "com1" | "com2" | "com3" | "com4" | "com5" | "com6" | "com7" | "com8" | "com9" | "lpt0" | "lpt1" | "lpt2" | "lpt3" | "lpt4" | "lpt5" | "lpt6" | "lpt7" | "lpt8" | "lpt9") {
+            return Err("Invalid OMP profile name".into());
+        }
+    }
+    if profile.is_none() {
+        if let Some(dir) = value("PI_CODING_AGENT_DIR").filter(|dir| !dir.is_empty()) {
+            let path = PathBuf::from(dir);
+            if !path.is_absolute() {
+                return Err("OMP agent directory must be absolute".into());
+            }
+            return Ok(path);
+        }
+    }
+    let mut root = home.join(".omp");
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Some(xdg) = value("XDG_DATA_HOME") {
+        let candidate = PathBuf::from(xdg).join("omp");
+        let candidate = profile.as_ref().map_or(candidate.clone(), |name| candidate.join("profiles").join(name));
+        if candidate.is_dir() {
+            root = PathBuf::from(value("XDG_DATA_HOME").unwrap()).join("omp");
+        }
+    }
+    if let Some(name) = profile { root = root.join("profiles").join(name); }
+    Ok(root.join("agent"))
+}
+
+/// OMP's ACP mode disables disk MCP discovery and accepts only client-declared
+/// servers. Read its existing config for this trusted built-in, never for an
+/// arbitrary ACP executable.
+#[tauri::command]
+pub fn acp_omp_mcp_config(
+    registry: tauri::State<'_, WorkspaceRegistry>,
+    cwd: String,
+    workspace: Option<WorkspaceEnv>,
+    profile_env: Option<Vec<AcpEnvVar>>,
+    profile_args: Option<Vec<String>>,
+) -> Result<OmpMcpConfig, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_wsl() {
+        return Err("OMP MCP config forwarding is not available for WSL workspaces".into());
+    }
+    let cwd = authorize_spawn_cwd(&registry, Some(&cwd), &workspace)?
+        .ok_or("Open a workspace to load OMP MCP servers")?;
+    let env = profile_env.unwrap_or_default();
+    validate_managed_env(&env)?;
+    let env = resolve_env(&env)?;
+    let args = profile_args.unwrap_or_default();
+    validate_managed_args(&args)?;
+    let mut user = read_omp_mcp_file(&omp_agent_dir(&env, &args)?.join("mcp.json"))?;
+    let mut project = read_omp_mcp_file(&cwd.join(".omp").join("mcp.json"))?;
+    expand_omp_mcp_env(&mut user, &env);
+    expand_omp_mcp_env(&mut project, &env);
+    Ok(OmpMcpConfig { user, project })
 }
 
 /// Shared spawn path for built-in and registry-installed agents. Each session
@@ -1191,6 +1318,30 @@ fn kill_process_tree(session: &AcpSession) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omp_mcp_expands_environment_without_losing_unset_variables() {
+        let mut config = serde_json::json!({"url": "${HOST:-https://localhost}/mcp", "token": "${TOKEN}", "missing": "${UNSET_OMP_TEST_VAR}"});
+        expand_omp_mcp_env(&mut config, &[("TOKEN".into(), "private".into())]);
+        assert_eq!(config["url"], "https://localhost/mcp");
+        assert_eq!(config["token"], "private");
+        assert_eq!(config["missing"], "${UNSET_OMP_TEST_VAR}");
+    }
+
+    #[test]
+    fn omp_mcp_config_uses_the_selected_profile_directory() {
+        let root = omp_agent_dir(&[("PI_CODING_AGENT_DIR".into(), "other-account".into())], &["--profile=work".into()]).unwrap();
+        assert!(root.ends_with(Path::new("profiles").join("work").join("agent")));
+        assert!(omp_agent_dir(&[], &["--profile=../other".into()]).is_err());
+    }
+
+    #[test]
+    fn omp_mcp_file_rejects_invalid_json() {
+        let path = std::env::temp_dir().join(format!("agni-omp-mcp-test-{}.json", std::process::id()));
+        std::fs::write(&path, b"not json").unwrap();
+        assert!(read_omp_mcp_file(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn message_requires_jsonrpc_envelope() {

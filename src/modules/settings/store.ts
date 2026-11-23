@@ -16,6 +16,13 @@ import {
   parseAgentSessions,
 } from "@/modules/agent-panel/lib/agentSessions";
 import {
+  type CatalogModel,
+  type ModelCatalogEntry,
+  mergeModelCatalog,
+  parseModelCatalog,
+  parseModelPreferences,
+} from "@/modules/agent-panel/lib/modelCatalog";
+import {
   type AgentProfile,
   parseAgentProfiles,
 } from "@/modules/agent-panel/lib/profile";
@@ -130,6 +137,10 @@ export type Preferences = {
   agentDefaultProfile: Record<string, string>;
   /** Open agent sessions, restored on launch. */
   agentSessions: AgentSessionsPref;
+  /** Last model catalog reported per harness account (`agent:profileId`). */
+  agentModelCatalog: Record<string, ModelCatalogEntry>;
+  /** Last model the user picked per harness account. */
+  agentModel: Record<string, string>;
   /** Full-workspace agent surface or the compact right dock. */
   agentPanelMode: AgentPanelMode;
   promptSounds: PromptSoundPref;
@@ -169,6 +180,8 @@ const KEY_INSTALLED_ACP_AGENTS = "installedAcpAgents";
 const KEY_AGENT_PROFILES = "agentProfiles";
 const KEY_AGENT_DEFAULT_PROFILE = "agentDefaultProfile";
 const KEY_AGENT_SESSIONS = "agentSessions";
+const KEY_AGENT_MODEL_CATALOG = "agentModelCatalog";
+const KEY_AGENT_MODEL = "agentModel";
 const KEY_AGENT_PANEL_MODE = "agentPanelMode";
 const KEY_PROMPT_SOUNDS = "promptSounds";
 const KEY_PROMPT_HISTORY_ENABLED = "promptHistoryEnabled";
@@ -220,6 +233,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   agentProfiles: [],
   agentDefaultProfile: {},
   agentSessions: EMPTY_AGENT_SESSIONS,
+  agentModelCatalog: {},
+  agentModel: {},
   agentPanelMode: "focus",
   promptSounds: "off",
   promptHistoryEnabled: true,
@@ -315,6 +330,10 @@ export async function loadPreferences(): Promise<Preferences> {
       get<unknown>(KEY_AGENT_DEFAULT_PROFILE),
     ),
     agentSessions: parseAgentSessions(get<unknown>(KEY_AGENT_SESSIONS)),
+    agentModelCatalog: parseModelCatalog(
+      get<unknown>(KEY_AGENT_MODEL_CATALOG),
+    ),
+    agentModel: parseModelPreferences(get<unknown>(KEY_AGENT_MODEL)),
     agentPanelMode:
       get<unknown>(KEY_AGENT_PANEL_MODE) === "dock" ? "dock" : "focus",
     promptSounds:
@@ -501,6 +520,34 @@ export async function setAgentSessions(
   await writePref(KEY_AGENT_SESSIONS, parseAgentSessions(value));
 }
 
+/** Remember the models a harness reported, keyed by agent and account. */
+export async function setAgentModelCatalog(
+  key: string,
+  models: CatalogModel[],
+): Promise<void> {
+  const current = parseModelCatalog(
+    await store.get<unknown>(KEY_AGENT_MODEL_CATALOG),
+  );
+  await writePref(KEY_AGENT_MODEL_CATALOG, {
+    ...current,
+    [key]: mergeModelCatalog(current[key], models),
+  });
+}
+
+/** Remember the model the user picked for a harness account. */
+export async function setAgentModel(
+  key: string,
+  modelId: string | null,
+): Promise<void> {
+  const current = parseModelPreferences(
+    await store.get<unknown>(KEY_AGENT_MODEL),
+  );
+  const next = { ...current };
+  if (modelId) next[key] = modelId;
+  else delete next[key];
+  await writePref(KEY_AGENT_MODEL, next);
+}
+
 export async function setAgentPanelMode(value: AgentPanelMode): Promise<void> {
   await writePref(KEY_AGENT_PANEL_MODE, value === "dock" ? "dock" : "focus");
 }
@@ -564,6 +611,8 @@ export async function onPreferencesChange(
     [KEY_AGENT_PROFILES]: "agentProfiles",
     [KEY_AGENT_DEFAULT_PROFILE]: "agentDefaultProfile",
     [KEY_AGENT_SESSIONS]: "agentSessions",
+    [KEY_AGENT_MODEL_CATALOG]: "agentModelCatalog",
+    [KEY_AGENT_MODEL]: "agentModel",
     [KEY_AGENT_PANEL_MODE]: "agentPanelMode",
     [KEY_PROMPT_SOUNDS]: "promptSounds",
     [KEY_PROMPT_HISTORY_ENABLED]: "promptHistoryEnabled",

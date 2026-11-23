@@ -10,18 +10,21 @@ type Entry = {
   unread: number;
   /** When the current working run began; null outside a working turn. */
   startedAt: number | null;
+  /** Live thread title reported by the harness, if it sent one. */
+  title: string | null;
 };
 
 type State = {
   tabs: Record<number, Entry>;
   setStatus: (tabId: number, status: AgentTabRunStatus) => void;
+  setTitle: (tabId: number, title: string | null) => void;
   markUnread: (tabId: number) => void;
   clearUnread: (tabId: number) => void;
   remove: (tabId: number) => void;
 };
 
 function idleEntry(): Entry {
-  return { status: "idle", unread: 0, startedAt: null };
+  return { status: "idle", unread: 0, startedAt: null, title: null };
 }
 
 /** Lightweight per-tab projection so the tab bar can show agent state. */
@@ -42,6 +45,13 @@ export const useAgentTabStatus = create<State>((set) => ({
       return {
         tabs: { ...state.tabs, [tabId]: { ...previous, status, startedAt } },
       };
+    }),
+  setTitle: (tabId, title) =>
+    set((state) => {
+      const previous = state.tabs[tabId] ?? idleEntry();
+      const next = title?.trim() || null;
+      if (previous.title === next) return state;
+      return { tabs: { ...state.tabs, [tabId]: { ...previous, title: next } } };
     }),
   markUnread: (tabId) =>
     set((state) => {
@@ -152,6 +162,11 @@ export function reportAgentTabStatus(options: {
     });
     notifyWhenUnfocused(`${agent} finished`, agent);
   }
+}
+
+/** Mirror a harness's live thread title into the sidebar row. */
+export function reportAgentTabTitle(tabId: number, title: string | null): void {
+  useAgentTabStatus.getState().setTitle(tabId, title);
 }
 
 /** Drop a closed tab's status dot and bell entry. */

@@ -5,6 +5,7 @@ pub mod agent;
 pub mod format;
 pub mod fs;
 pub mod git;
+pub mod github;
 pub mod http;
 pub mod jsonl;
 pub mod pets;

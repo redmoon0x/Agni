@@ -30,9 +30,12 @@ import {
   type SearchInlineHandle,
   type SearchTarget,
 } from "@/modules/header";
-import { AgentDock, AgentsSidebar } from "@/modules/agent-panel";
+import { AgentDock, ThreadsSidebar } from "@/modules/agent-panel";
 import { useAgentTabStatus } from "@/modules/agent-panel/lib/agentTabStatus";
 import { forgetAgentTab } from "@/modules/agent-panel/lib/agentTabStatus";
+import { requestAgentPicker } from "@/modules/agent-panel/lib/pickerIntent";
+import { useThreadUiStore } from "@/modules/agent-panel/lib/threadUiStore";
+import type { AgentId } from "@/modules/settings/store";
 import { planAgentSessionRestore } from "@/modules/agent-panel/lib/agentSessions";
 import { useAgentStore } from "@/modules/agents/store/agentStore";
 import {
@@ -316,18 +319,20 @@ export default function App() {
     ],
   );
 
-  const revealAgentsView = useCallback(() => {
+  const revealThreadsView = useCallback(() => {
     sidebarRef.current?.expand();
-    persistSidebarView("agents");
+    persistSidebarView("threads");
   }, [persistSidebarView, sidebarRef]);
 
   /** Opening content needs the editor back: dock the agent to the right. */
   const revealWorkspace = useCallback(() => {
-    if (!agentSurface) return;
+    // Focus mode hides the workspace behind the agent; any content open must
+    // leave that mode even if the panel has no live tab yet.
+    if (!agentFocus) return;
     usePreferencesStore.setState({ agentPanelMode: "dock" });
     void setAgentPanelMode("dock");
     openRightPanel();
-  }, [agentSurface, openRightPanel]);
+  }, [agentFocus, openRightPanel]);
 
   const toggleAgentLayout = useCallback(() => {
     const next: AgentPanelMode = agentFocus ? "dock" : "focus";
@@ -337,19 +342,19 @@ export default function App() {
   }, [agentFocus, openRightPanel]);
 
   const onNewAgent = useCallback(() => {
-    // The Agents list is the switcher; reveal it when the user asks for agents.
+    // The panel owns harness and model selection; just reveal it and open its picker.
     openRightPanel();
-    revealAgentsView();
-  }, [openRightPanel, revealAgentsView]);
+    requestAgentPicker();
+  }, [openRightPanel]);
 
   const openAgentFromSidebar = useCallback(
-    (agent: string, profileId?: string | null) => {
-      // Keep the side-panel agent visible; this opens alongside it as a tab.
+    (agent: AgentId, profileId?: string | null, modelId?: string | null) => {
       handleNewAgentTab({
         agent,
         cwd: explorerRoot,
         workspace: workspaceEnv,
         profileId,
+        initialModel: modelId ?? null,
       });
     },
     [explorerRoot, handleNewAgentTab, workspaceEnv],
@@ -387,7 +392,11 @@ export default function App() {
       openRightPanel();
       // Keep the header's agent icon in step with the active session.
       const tab = agentTabs.find((entry) => entry.id === id);
-      if (tab) void setAgentPanelAgent(tab.agent);
+      if (tab) {
+        void setAgentPanelAgent(tab.agent);
+        // Record the visit for the sidebar's MRU order and relative time.
+        useThreadUiStore.getState().markVisited(tab.key);
+      }
       // Opening the session acknowledges its bell entry and unread badge.
       useAgentTabStatus.getState().clearUnread(id);
       useAgentStore.getState().finish(-id);
@@ -541,7 +550,7 @@ export default function App() {
       records[activeIndex >= 0 ? activeIndex : ids.length - 1];
     if (activeRecord) void setAgentPanelAgent(activeRecord.agent);
     openRightPanel();
-    revealAgentsView();
+    revealThreadsView();
     if (dropped > 0) {
       toast(
         `Restored ${records.length} agent session${
@@ -552,7 +561,7 @@ export default function App() {
   }, [
     newAgentTab,
     openRightPanel,
-    revealAgentsView,
+    revealThreadsView,
     preferencesHydrated,
   ]);
 
@@ -724,6 +733,26 @@ export default function App() {
       openGitDiffTab({ path, repoRoot: explorerRoot, mode: "-" });
     },
     [explorerRoot, openGitDiffTab, revealWorkspace],
+  );
+
+  /** Hand a prompt to a different harness: start a fresh thread there, prefilled. */
+  const handleAgentSpawn = useCallback(
+    (
+      agent: AgentId,
+      profileId: string | null,
+      modelId: string | null,
+      prompt: string,
+    ) => {
+      handleNewAgentTab({
+        agent,
+        cwd: explorerRoot,
+        workspace: workspaceEnv,
+        profileId,
+        initialModel: modelId,
+        initialPrompt: prompt.trim() ? prompt : null,
+      });
+    },
+    [explorerRoot, handleNewAgentTab, workspaceEnv],
   );
 
   const handleAgentFanout = useCallback(
@@ -1148,6 +1177,7 @@ export default function App() {
         activeId={activeAgentTabId}
         visible={agentSurface || rightPanelOpen}
         workspace={workspaceEnv}
+        cwd={explorerRoot}
         resumeTabIds={restoredTabIds}
         layoutMode={agentSurface ? "focus" : "dock"}
         onToggleLayout={toggleAgentLayout}
@@ -1156,7 +1186,8 @@ export default function App() {
         onSwitchProfile={switchAgentProfile}
         onFanout={handleAgentFanout}
         onOpenAgent={openAgentFromSidebar}
-        onBrowseAgents={onNewAgent}
+        onActivateTab={activateAgentTab}
+        onSpawnAgent={handleAgentSpawn}
       />
     </ErrorBoundary>
   );
@@ -1216,15 +1247,14 @@ export default function App() {
                       resetKey={sidebarView}
                       inline
                     >
-                      {sidebarView === "agents" ? (
-                        <AgentsSidebar
+                      {sidebarView === "threads" ? (
+                        <ThreadsSidebar
                           cwd={explorerRoot}
-                          workspace={workspaceEnv}
                           agentTabs={agentTabs}
                           activeTabId={activeAgentTabId}
                           onActivateTab={activateAgentTab}
                           onCloseTab={closeAgentTab}
-                          onOpenAgent={openAgentFromSidebar}
+                          onNewSession={onNewAgent}
                         />
                       ) : sidebarView === "explorer" ? (
                         <FileExplorer
@@ -1369,6 +1399,9 @@ export default function App() {
               home={home}
               onCd={sendCd}
               onWorkspaceChange={switchWorkspace}
+              branch={sourceControl.status?.branch ?? null}
+              isDetached={sourceControl.status?.isDetached ?? false}
+              repoRoot={sourceControl.repo?.repoRoot ?? null}
             />
           )}
 
@@ -1398,7 +1431,7 @@ export default function App() {
             open={newEditorOpen}
             onOpenChange={setNewEditorOpen}
             rootPath={explorerRoot ?? home}
-            onCreated={(path) => openFileTab(path)}
+            onCreated={(path) => handleOpenFile(path, true)}
           />
 
           <UpdaterDialog />

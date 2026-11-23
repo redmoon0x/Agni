@@ -35,6 +35,8 @@ export type SourceControlEntry = {
   statusCode: string;
   originalPath: string | null;
   untracked: boolean;
+  additions: number;
+  deletions: number;
 };
 
 export type CheckState = "checked" | "indeterminate" | "unchecked";
@@ -50,6 +52,8 @@ export type SourceControlFileEntry = {
   staged: boolean;
   unstaged: boolean;
   untracked: boolean;
+  additions: number;
+  deletions: number;
 };
 
 export type PendingDiscard = {
@@ -151,6 +155,8 @@ function makeEntry(
     statusCode: statusCodeForMode(mode, file),
     originalPath: file.originalPath,
     untracked: file.untracked,
+    additions: file.additions,
+    deletions: file.deletions,
   };
 }
 
@@ -211,6 +217,8 @@ function optimisticUnstage(
         unstaged: true,
         untracked: false,
         statusLabel: "Deleted",
+        additions: 0,
+        deletions: file.deletions,
       });
       next.push({
         path: file.path,
@@ -221,6 +229,8 @@ function optimisticUnstage(
         unstaged: true,
         untracked: true,
         statusLabel: "Untracked",
+        additions: file.additions,
+        deletions: 0,
       });
       continue;
     }
@@ -341,6 +351,8 @@ export function useSourceControlPanel(
         staged: file.staged,
         unstaged: file.unstaged,
         untracked: file.untracked,
+        additions: file.additions,
+        deletions: file.deletions,
       });
     }
     return out;
@@ -688,6 +700,8 @@ export function useSourceControlPanel(
           statusCode: entry.statusCode,
           originalPath: entry.originalPath,
           untracked: entry.untracked,
+          additions: entry.additions,
+          deletions: entry.deletions,
         },
       });
     },

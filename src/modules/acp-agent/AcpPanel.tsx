@@ -40,11 +40,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { ClaudeLogoIcon } from "@/modules/acp-agent/ClaudeLogoIcon";
 import { CommandCodeLogoIcon } from "@/modules/acp-agent/CommandCodeLogoIcon";
@@ -91,16 +86,16 @@ import type {
 import {
   forgetAgentTab,
   reportAgentTabStatus,
+  reportAgentTabTitle,
   tabStatusFromRun,
 } from "@/modules/agent-panel/lib/agentTabStatus";
 import { clipboardImageFiles } from "@/modules/agent-panel/lib/clipboardImages";
+import { agentSessionConfig } from "@/modules/agent-panel/lib/launch";
 import {
-  defaultProfileFor,
-  managedProfileEnvError,
-  profileCustomLaunch,
-  profileEnvWire,
-  profileExtraArgs,
-} from "@/modules/agent-panel/lib/profile";
+  modelCatalogKey,
+  type CatalogModel,
+} from "@/modules/agent-panel/lib/modelCatalog";
+import { useAgentPickerIntent } from "@/modules/agent-panel/lib/pickerIntent";
 import {
   formatCost,
   formatCount,
@@ -129,7 +124,11 @@ import {
 } from "@/modules/agent-ui/Header";
 import { groupToolRuns } from "@/modules/agent-ui/lib/groupToolRuns";
 import { minimapMarkers } from "@/modules/agent-ui/lib/minimap";
-import { baseName, displayPath } from "@/modules/agent-ui/lib/path";
+import {
+  baseName,
+  displayPath,
+  resolveToolPath,
+} from "@/modules/agent-ui/lib/path";
 import {
   recallPrompt,
   recordPrompt,
@@ -150,13 +149,17 @@ import {
   useWorkspaceFileSearch,
 } from "@/modules/command-palette/useWorkspaceFileSearch";
 import { usePreviewAnnotateDraftStore } from "@/modules/preview-annotate";
-import { AgentProfileChip } from "@/modules/agent-panel/AgentProfileChip";
+import { AgentPicker } from "@/modules/agent-panel/AgentPicker";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   type AgentPanelMode,
+  type AgentId,
   setAcpAdditionalDirectories,
   setAcpRuntimeMode,
+  setAgentModel,
+  setAgentModelCatalog,
 } from "@/modules/settings/store";
+import type { AgentTab } from "@/modules/tabs/lib/useTabs";
 import { type WorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
 
 type Props = {
@@ -172,6 +175,21 @@ type Props = {
   active?: boolean;
   profileId?: string | null;
   onSwitchProfile?: (profileId: string) => void;
+  /** Open sessions, so the picker can focus them instead of duplicating. */
+  tabs: readonly AgentTab[];
+  onOpenAgent: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId?: string | null,
+  ) => void;
+  onActivateTab: (id: number) => void;
+  /** Start another harness in a fresh thread with a handoff prompt. */
+  onSpawnAgent?: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId: string | null,
+    prompt: string,
+  ) => void;
   /** Restored tab: resume its latest harness session once connected. */
   resumeLatest?: boolean;
   /** Full-workspace surface (focus) or the compact right dock. */
@@ -371,7 +389,7 @@ function ToolContentItem({
           {onOpenPath ? (
             <button
               type="button"
-              onClick={() => onOpenPath(content.path)}
+              onClick={() => onOpenPath(resolveToolPath(content.path, cwd ?? null))}
               title={content.path}
               className="max-w-full truncate text-left hover:text-foreground hover:underline"
             >
@@ -550,6 +568,8 @@ function ToolRow({
   onOpenPath?: (path: string, line?: number) => void;
 }) {
   const location = tool.locations[0];
+  // ACP reports locations relative to the agent's cwd; file IO needs absolute.
+  const resolvedPath = location ? resolveToolPath(location.path, cwd) : null;
   return (
     <AgentToolRow
       title={tool.title || tool.name || tool.kind}
@@ -557,7 +577,7 @@ function ToolRow({
       kind={tool.kind}
       status={ACP_TOOL_STATUS[tool.status] ?? "pending"}
       meta={tool.name}
-      path={location?.path}
+      path={resolvedPath}
       line={location?.line}
       onOpenPath={onOpenPath}
       detail={
@@ -1247,156 +1267,6 @@ function ModeSelect({
   );
 }
 
-function ModelPicker({
-  label,
-  options,
-  currentValue,
-  onSelect,
-}: {
-  label: string;
-  options: {
-    value: string;
-    name: string;
-    description?: string;
-    groupId?: string;
-    groupName?: string;
-  }[];
-  currentValue: string;
-  onSelect: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const current = options.find((value) => value.value === currentValue);
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-  const needle = query.trim().toLowerCase();
-  const filtered = needle
-    ? options.filter((value) =>
-        `${value.name} ${value.value} ${value.groupName ?? ""} ${value.groupId ?? ""}`.toLowerCase().includes(needle),
-      )
-    : options;
-  const groups = groupConfigValuesByProvider(
-    filtered.map((v) => ({
-      value: v.value,
-      name: v.name,
-      ...(v.description ? { description: v.description } : {}),
-      ...(v.groupId ? { groupId: v.groupId } : {}),
-      ...(v.groupName ? { groupName: v.groupName } : {}),
-    })),
-  );
-  const showGroups = groups.length > 1;
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setQuery("");
-      }}
-    >
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          title={current ? `${current.name}` : label}
-          className="max-w-40 truncate rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
-        >
-          {current?.name ?? label}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="end"
-        sideOffset={6}
-        collisionPadding={8}
-        className="w-72 overflow-hidden rounded-2xl p-2"
-      >
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search models..."
-          className="mb-1.5 w-full rounded-md border border-border/70 bg-transparent px-2 py-1.5 text-[12px] outline-none placeholder:text-muted-foreground/70"
-        />
-        <div
-          className="min-h-0 overflow-y-auto overscroll-contain"
-          style={{ maxHeight: "min(60vh, 18rem)" }}
-        >
-          {filtered.length === 0 ? (
-            <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">
-              No models found.
-            </p>
-          ) : showGroups ? (
-            groups.map((group) => (
-              <div key={group.id || group.name || "ungrouped"}>
-                <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {formatProviderLabel(group.id, group.name)}
-                </div>
-                {group.values.map((value) => (
-                  <button
-                    key={value.value}
-                    type="button"
-                    onClick={() => {
-                      onSelect(value.value);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent hover:text-accent-foreground",
-                      value.value === currentValue && "font-medium",
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      {stripProviderPrefix(value.name, group.id, group.name)}
-                    </span>
-                    {value.description ? (
-                      <span className="ml-2 max-w-24 truncate text-[10px] text-muted-foreground">
-                        {value.description}
-                      </span>
-                    ) : null}
-                    {value.value === currentValue ? (
-                      <HugeiconsIcon
-                        icon={Tick02Icon}
-                        className="ml-auto shrink-0"
-                      />
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            ))
-          ) : (
-            filtered.map((value) => (
-              <button
-                key={value.value}
-                type="button"
-                onClick={() => {
-                  onSelect(value.value);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent hover:text-accent-foreground",
-                  value.value === currentValue && "font-medium",
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">{value.name}</span>
-                {value.description ? (
-                  <span className="ml-2 max-w-24 truncate text-[10px] text-muted-foreground">
-                    {value.description}
-                  </span>
-                ) : null}
-                {value.value === currentValue ? (
-                  <HugeiconsIcon
-                    icon={Tick02Icon}
-                    className="ml-auto shrink-0"
-                  />
-                ) : null}
-              </button>
-            ))
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 function formatSessionTime(value: string | null): string {
   if (!value) return "";
@@ -1747,13 +1617,43 @@ function ExtraFoldersDialog({
 function AcpComposer({
   agent,
   root,
+  workspace,
   initialPrompt,
   onFanout,
+  profileId,
+  models,
+  modelId,
+  onSelectModel,
+  tabs,
+  onOpenAgent,
+  onActivateTab,
+  onSpawnAgent,
+  openRequest,
 }: {
   agent: string;
   root: string | null;
+  workspace: WorkspaceEnv;
   initialPrompt?: string | null;
   onFanout?: (models: { model: string; prompt: string }[]) => void;
+  profileId?: string | null;
+  models: CatalogModel[];
+  modelId: string | null;
+  onSelectModel: (modelId: string) => void;
+  tabs: readonly AgentTab[];
+  onOpenAgent: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId?: string | null,
+  ) => void;
+  onActivateTab: (id: number) => void;
+  /** Hand the current prompt to another harness in a fresh thread. */
+  onSpawnAgent?: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId: string | null,
+    prompt: string,
+  ) => void;
+  openRequest?: number;
 }) {
   const client = useAcpClient();
   const connection = useAcpStore((state) => state.connection);
@@ -1834,9 +1734,6 @@ function AcpComposer({
     listOnEmpty: true,
   });
 
-  const modelOption = configOptions.find(
-    (option) => option.category === "model" && option.type === "select",
-  );
   const thoughtOption = configOptions.find(
     (option) => option.category === "thought_level" && option.type === "select",
   );
@@ -1846,17 +1743,16 @@ function AcpComposer({
   const modelConfigOptions = configOptions.filter(
     (option) => option.category === "model_config",
   );
+  const showModeSelect = !modeOption && modeState !== null;
+  // The composer's model picker already covers a `model` option, so showing it
+  // again as a generic config select duplicates the model control.
   const otherOptions = configOptions.filter(
     (option) =>
-      option !== modelOption &&
       option !== thoughtOption &&
       option !== modeOption &&
+      option.category !== "model" &&
       !modelConfigOptions.includes(option),
   );
-  const showModeSelect = !modeOption && modeState !== null;
-  // Agents expose models either as a `model` config option or as an ACP
-  // `SessionModelState` catalog. The config option wins when both are present.
-  const showModelSelect = !modelOption && modelState !== null;
 
   const applyCommand = (name: string) => {
     setInput(`/${name} `);
@@ -2228,35 +2124,20 @@ function AcpComposer({
               </>
             ) : null}
             <span className="min-w-0 flex-1" />
-            {modelOption ? (
-              <ModelPicker
-                label={modelOption.name}
-                options={modelOption.options}
-                currentValue={String(modelOption.currentValue)}
-                onSelect={(value) =>
-                  runAcpAction(
-                    client,
-                    client.setConfigOption(modelOption.id, value),
-                  )
-                }
-              />
-            ) : null}
-            {showModelSelect && modelState ? (
-              <ModelPicker
-                label="Model"
-                options={modelState.availableModels.map((model) => ({
-                  value: model.modelId,
-                  name: model.name,
-                  ...(model.description ? { description: model.description } : {}),
-                  ...(model.groupId ? { groupId: model.groupId } : {}),
-                  ...(model.groupName ? { groupName: model.groupName } : {}),
-                }))}
-                currentValue={modelState.currentModelId ?? ""}
-                onSelect={(value) =>
-                  runAcpAction(client, client.setModel(value))
-                }
-              />
-            ) : null}
+            <AgentPicker
+              workspace={workspace}
+              cwd={root}
+              tabs={tabs}
+              agent={agent}
+              profileId={profileId}
+              models={models}
+              modelId={modelId}
+              onSelectModel={onSelectModel}
+              onOpenAgent={onOpenAgent}
+              onActivateTab={onActivateTab}
+              emphasis="model"
+              openRequest={openRequest}
+            />
             {onFanout && modelState && modelState.availableModels.length > 1 ? (
               <AgentComposerChip
                 title="Fan out: open a tab per model with this prompt"
@@ -2269,6 +2150,24 @@ function AcpComposer({
               >
                 Fan out
               </AgentComposerChip>
+            ) : null}
+            {onSpawnAgent ? (
+              <AgentPicker
+                workspace={workspace}
+                cwd={root}
+                tabs={tabs}
+                models={models}
+                modelId={modelId}
+                onSelectModel={onSelectModel}
+                onOpenAgent={onOpenAgent}
+                onActivateTab={onActivateTab}
+                onSpawnAgent={onSpawnAgent}
+                spawnPrompt={input}
+                triggerLabel="Spin up"
+                emphasis="agent"
+                side="top"
+                align="end"
+              />
             ) : null}
             {modelConfigOptions.map((option) =>
               option.type === "boolean" ? (
@@ -2391,12 +2290,57 @@ function AcpPanelBody({
   active,
   profileId,
   onSwitchProfile,
+  tabs,
+  onOpenAgent,
+  onActivateTab,
+  onSpawnAgent,
   resumeLatest,
   layoutMode,
   onToggleLayout,
 }: Props) {
   const client = useAcpClient();
   const state = useAcpState();
+  const modelOption = state.configOptions.find(
+    (option) => option.category === "model" && option.type === "select",
+  );
+  const sessionModels = useMemo<CatalogModel[]>(() => {
+    if (modelOption) {
+      return modelOption.options.map((option) => ({
+        id: option.value,
+        name: option.name,
+        ...(option.description ? { description: option.description } : {}),
+        ...(option.groupId ? { groupId: option.groupId } : {}),
+        ...(option.groupName ? { groupName: option.groupName } : {}),
+      }));
+    }
+    return (state.modelState?.availableModels ?? []).map((model) => ({
+      id: model.modelId,
+      name: model.name,
+      ...(model.description ? { description: model.description } : {}),
+      ...(model.groupId ? { groupId: model.groupId } : {}),
+      ...(model.groupName ? { groupName: model.groupName } : {}),
+    }));
+  }, [modelOption, state.modelState]);
+  const modelId = modelOption
+    ? String(modelOption.currentValue)
+    : (state.modelState?.currentModelId ?? null);
+  const selectModel = (value: string) => {
+    void setAgentModel(modelCatalogKey(agent, profileId), value);
+    if (modelOption) {
+      void runAcpAction(client, client.setConfigOption(modelOption.id, value));
+      return;
+    }
+    void runAcpAction(client, client.setModel(value));
+  };
+  const pickerRequest = useAgentPickerIntent((state) => state.request);
+  const recordedCatalog = useRef<string | null>(null);
+  const catalogSignature = sessionModels.map((model) => model.id).join(",");
+  useEffect(() => {
+    if (sessionModels.length === 0) return;
+    if (recordedCatalog.current === catalogSignature) return;
+    recordedCatalog.current = catalogSignature;
+    void setAgentModelCatalog(modelCatalogKey(agent, profileId), sessionModels);
+  }, [agent, catalogSignature, profileId, sessionModels]);
   const defaultLabel = staticAgentLabel(agent);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [extraFoldersOpen, setExtraFoldersOpen] = useState(false);
@@ -2554,6 +2498,11 @@ function AcpPanelBody({
     [tabId],
   );
 
+  useEffect(() => {
+    if (tabId === undefined) return;
+    reportAgentTabTitle(tabId, state.sessionTitle);
+  }, [state.sessionTitle, tabId]);
+
   let subtitle = state.sessionTitle ?? agentLabel;
   let subtitleTone: AgentSubtitleTone = "default";
   if (switching) {
@@ -2588,11 +2537,20 @@ function AcpPanelBody({
       <AgentHeader
         mark={<AgentMark agent={agent} size={14} />}
         label={defaultLabel}
-        chips={
-          <AgentProfileChip
+        picker={
+          <AgentPicker
+            workspace={workspace}
+            cwd={cwd}
+            tabs={tabs}
             agent={agent}
             profileId={profileId}
+            modelId={modelId}
+            onOpenAgent={onOpenAgent}
+            onActivateTab={onActivateTab}
             onSwitchProfile={onSwitchProfile}
+            emphasis="agent"
+            side="bottom"
+            align="start"
           />
         }
         status={runStatus}
@@ -2796,8 +2754,18 @@ function AcpPanelBody({
       <AcpComposer
         agent={agent}
         root={cwd}
+        workspace={workspace}
         initialPrompt={initialPrompt}
         onFanout={onFanout}
+        profileId={profileId}
+        models={sessionModels}
+        modelId={modelId}
+        onSelectModel={selectModel}
+        tabs={tabs}
+        onOpenAgent={onOpenAgent}
+        onActivateTab={onActivateTab}
+        onSpawnAgent={onSpawnAgent}
+        openRequest={active ? pickerRequest : 0}
       />
       <SessionSwitcherDialog
         open={sessionSwitcherOpen}
@@ -2822,61 +2790,27 @@ export function AcpPanel(props: Props) {
   const profileDefaults = usePreferencesStore(
     (state) => state.agentDefaultProfile,
   );
-  const profile = useMemo(() => {
-    if (props.profileId) {
-      const found = profiles.find((entry) => entry.id === props.profileId);
-      if (found) return found;
-    }
-    return defaultProfileFor(profiles, props.agent, profileDefaults);
-  }, [profileDefaults, profiles, props.agent, props.profileId]);
-  const storedLaunch =
-    installed.find((agent) => agent.id === props.agent) ?? null;
-  const devLaunch =
-    import.meta.env.DEV && props.agent === "dev-replay"
-      ? {
-          program: "node",
-          args: ["scripts/dev-replay-agent.mjs"],
-          env: [],
-          managed: false,
-        }
-      : null;
-  const customProfileLaunch = profile ? profileCustomLaunch(profile) : null;
-  const launch = customProfileLaunch
-    ? {
-        program: customProfileLaunch.program,
-        args: customProfileLaunch.args,
-        env: [],
-        managed: false,
-        custom: true,
-      }
-    : (devLaunch ??
-      (storedLaunch
-        ? {
-            program: storedLaunch.program,
-            args: storedLaunch.args,
-            env: storedLaunch.env,
-            managed: storedLaunch.managed,
-          }
-        : null));
   const config = useMemo<AcpSessionConfig>(
-    () => ({
-      agent: props.agent,
-      cwd: props.cwd ?? "",
-      workspace: props.workspace,
-      launch: launch ?? undefined,
-      initialModel: props.initialModel ?? null,
-      profileId: profile?.id ?? null,
-      profileEnv: profile ? profileEnvWire(profile) : undefined,
-      profileArgs: profile ? profileExtraArgs(profile) : undefined,
-      profileEnvError: managedProfileEnvError(profile),
-    }),
+    () =>
+      agentSessionConfig({
+        agent: props.agent,
+        cwd: props.cwd,
+        workspace: props.workspace,
+        initialModel: props.initialModel ?? null,
+        profileId: props.profileId ?? null,
+        installed,
+        profiles,
+        defaults: profileDefaults,
+      }),
     [
-      profile,
+      installed,
+      profileDefaults,
+      profiles,
       props.agent,
       props.cwd,
       props.initialModel,
+      props.profileId,
       props.workspace,
-      launch,
     ],
   );
   return (

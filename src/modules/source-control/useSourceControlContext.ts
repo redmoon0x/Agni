@@ -71,7 +71,9 @@ export function useSourceControlContext({
   const sourceControlPath = sourceControlActive
     ? sourceControlContextPath
     : badgeContextPath;
-  const sourceControl = useSourceControl(sourceControlPath, true);
+  const sourceControl = useSourceControl(sourceControlPath, true, {
+    active: sourceControlActive,
+  });
 
   const toggleSourceControl = useCallback(() => {
     cycleSidebarView("source-control");

@@ -55,6 +55,7 @@ import { playCompletionSound } from "@/modules/agent-ui/lib/sounds";
 import {
   forgetAgentTab,
   reportAgentTabStatus,
+  reportAgentTabTitle,
   tabStatusFromRun,
 } from "@/modules/agent-panel/lib/agentTabStatus";
 import {
@@ -68,7 +69,9 @@ import {
 import { AgentProfileChip } from "@/modules/agent-panel/AgentProfileChip";
 import { agentLabel } from "@/modules/agent-panel/lib/installedAgents";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import type { AgentPanelMode } from "@/modules/settings/store";
+import type { AgentId, AgentPanelMode } from "@/modules/settings/store";
+import type { AgentTab } from "@/modules/tabs/lib/useTabs";
+import { AgentPicker } from "@/modules/agent-panel/AgentPicker";
 import {
   formatContextUsage,
   formatCost,
@@ -99,7 +102,11 @@ import {
 } from "@/modules/agent-ui/Messages";
 import { AgentThinking } from "@/modules/agent-ui/Thinking";
 import { AgentToolRow, type AgentToolStatus } from "@/modules/agent-ui/ToolRow";
-import { baseName, displayPath } from "@/modules/agent-ui/lib/path";
+import {
+  baseName,
+  displayPath,
+  resolveToolPath,
+} from "@/modules/agent-ui/lib/path";
 import {
   type CommandPaletteFileHit,
   useWorkspaceFileSearch,
@@ -153,6 +160,21 @@ type Props = {
   profileId?: string | null;
   /** Replace this tab with another Pi account. */
   onSwitchProfile?: (profileId: string) => void;
+  /** Open sessions, so the spawn picker can focus them. */
+  tabs: readonly AgentTab[];
+  onOpenAgent: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId?: string | null,
+  ) => void;
+  onActivateTab: (id: number) => void;
+  /** Hand the prompt to another harness in a fresh thread. */
+  onSpawnAgent?: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId: string | null,
+    prompt: string,
+  ) => void;
   /** Full-workspace surface (focus) or the compact right dock. */
   layoutMode: AgentPanelMode;
   onToggleLayout: () => void;
@@ -261,7 +283,7 @@ function ToolRow({
           </pre>
         ) : undefined
       }
-      path={file?.path}
+      path={file ? resolveToolPath(file.path, cwd) : null}
       line={file?.line}
       onOpenPath={onOpenPath}
     />
@@ -420,7 +442,30 @@ function readImageAttachment(file: File): Promise<PiImageAttachment> {
 
 /** Finds the `@mention` token the caret is currently inside, if any. */
 
-function PiComposer({ root }: { root: string | null }) {
+function PiComposer({
+  root,
+  workspace,
+  tabs,
+  onOpenAgent,
+  onActivateTab,
+  onSpawnAgent,
+}: {
+  root: string | null;
+  workspace: WorkspaceEnv;
+  tabs: readonly AgentTab[];
+  onOpenAgent: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId?: string | null,
+  ) => void;
+  onActivateTab: (id: number) => void;
+  onSpawnAgent?: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId: string | null,
+    prompt: string,
+  ) => void;
+}) {
   const connection = usePiStore((state) => state.connection);
   const session = usePiStore((state) => state.session);
   const models = usePiStore((state) => state.models);
@@ -801,6 +846,21 @@ function PiComposer({ root }: { root: string | null }) {
             </DropdownMenu>
           ) : null}
           <span className="min-w-0 flex-1" />
+          {onSpawnAgent ? (
+            <AgentPicker
+              workspace={workspace}
+              cwd={root}
+              tabs={tabs}
+              onOpenAgent={onOpenAgent}
+              onActivateTab={onActivateTab}
+              onSpawnAgent={onSpawnAgent}
+              spawnPrompt={input}
+              triggerLabel="Spin up"
+              emphasis="agent"
+              side="top"
+              align="end"
+            />
+          ) : null}
           <Popover open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
             <PopoverTrigger asChild>
               <AgentComposerChip
@@ -1130,6 +1190,10 @@ export function PiPanel({
   active,
   profileId,
   onSwitchProfile,
+  tabs,
+  onOpenAgent,
+  onActivateTab,
+  onSpawnAgent,
   layoutMode,
   onToggleLayout,
 }: Props) {
@@ -1244,6 +1308,11 @@ export function PiPanel({
     },
     [tabId],
   );
+
+  useEffect(() => {
+    if (tabId === undefined) return;
+    reportAgentTabTitle(tabId, state.session.sessionName ?? null);
+  }, [state.session.sessionName, tabId]);
 
   let subtitle =
     state.session.sessionName ??
@@ -1594,7 +1663,14 @@ export function PiPanel({
         widgets={state.extensionWidgets}
         placement="aboveEditor"
       />
-      <PiComposer root={cwd} />
+      <PiComposer
+        root={cwd}
+        workspace={workspace}
+        tabs={tabs}
+        onOpenAgent={onOpenAgent}
+        onActivateTab={onActivateTab}
+        onSpawnAgent={onSpawnAgent}
+      />
       <ExtensionWidgets
         widgets={state.extensionWidgets}
         placement="belowEditor"

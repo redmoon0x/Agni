@@ -1,8 +1,8 @@
 import { cn } from "@/lib/utils";
 import {
+  Chat01Icon,
   FolderGitTwoIcon,
   FolderTreeIcon,
-  Robot01Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -32,9 +32,9 @@ export function SidebarRail({
 }: Props) {
   const items: RailItem[] = [
     {
-      id: "agents",
-      label: "Agents",
-      icon: Robot01Icon,
+      id: "threads",
+      label: "Threads",
+      icon: Chat01Icon,
       badge: agentAttention,
     },
     { id: "explorer", label: "Files", icon: FolderTreeIcon },

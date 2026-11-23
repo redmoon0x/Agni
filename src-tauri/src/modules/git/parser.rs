@@ -121,7 +121,35 @@ fn make_file(
         unstaged: is_unstaged(index_status, worktree_status),
         untracked: index_status == '?' && worktree_status == '?',
         status_label: status_label(index_status, worktree_status),
+        additions: 0,
+        deletions: 0,
     }
+}
+
+/// Parse `git diff --numstat -z` into `path -> (additions, deletions)`.
+/// A rename record has an empty path field followed by the old and new paths.
+pub fn parse_numstat_z(stdout: &str) -> std::collections::HashMap<String, (u32, u32)> {
+    let mut out = std::collections::HashMap::new();
+    let mut tokens = stdout.split('\0');
+    while let Some(tok) = tokens.next() {
+        if tok.is_empty() {
+            continue;
+        }
+        let mut parts = tok.splitn(3, '\t');
+        let adds = parts.next().unwrap_or("").parse::<u32>().unwrap_or(0);
+        let dels = parts.next().unwrap_or("").parse::<u32>().unwrap_or(0);
+        let path = parts.next().unwrap_or("");
+        if path.is_empty() {
+            let _old = tokens.next();
+            let new = tokens.next().unwrap_or("");
+            if !new.is_empty() {
+                out.insert(new.to_string(), (adds, dels));
+            }
+        } else {
+            out.insert(path.to_string(), (adds, dels));
+        }
+    }
+    out
 }
 
 fn is_staged(index_status: char, worktree_status: char) -> bool {
@@ -180,6 +208,21 @@ mod tests {
         assert!(parsed.files[1].staged);
         assert_eq!(parsed.files[2].path, "src/untracked.rs");
         assert!(parsed.files[2].untracked);
+    }
+
+    #[test]
+    fn numstat_z_parses_paths_and_renames() {
+        let stdout = concat!(
+            "12\t3\tsrc/a.rs\0",
+            "0\t8\tsrc/b.rs\0",
+            "5\t1\t\0src/old.rs\0src/new.rs\0",
+            "-\t-\tassets/logo.png\0",
+        );
+        let stats = super::parse_numstat_z(stdout);
+        assert_eq!(stats.get("src/a.rs"), Some(&(12, 3)));
+        assert_eq!(stats.get("src/b.rs"), Some(&(0, 8)));
+        assert_eq!(stats.get("src/new.rs"), Some(&(5, 1)));
+        assert_eq!(stats.get("assets/logo.png"), Some(&(0, 0)));
     }
 
     #[test]

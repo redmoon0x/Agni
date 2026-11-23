@@ -33,6 +33,7 @@ import {
 import type { AcpAgentId } from "@/modules/acp-agent/lib/agent";
 import { runInDockTerminal } from "@/modules/terminal-dock/lib/dockBridge";
 import { invalidateAgentAvailability } from "@/modules/agent-panel/lib/installedAgents";
+import { ompMcpServers, type OmpMcpConfig } from "@/modules/acp-agent/lib/ompMcp";
 import { resolveProfileEnvWire } from "@/modules/agent-panel/lib/profile";
 import type {
   AcpAttachment,
@@ -231,14 +232,21 @@ function protocolVersion(): 1 | 2 {
   return store.getState().protocolVersion ?? 1;
 }
 
-/** ACP v1 makes `mcpServers` a required field on session/new, session/load and
- *  session/resume. Agni ships no MCP configuration, so it is always empty. v2
- *  makes the field optional and it is omitted. */
-function withMcpServers(
+async function withMcpServers(
   params: Record<string, unknown>,
   version: 1 | 2,
-): Record<string, unknown> {
-  if (version === 1) params.mcpServers = [];
+): Promise<Record<string, unknown>> {
+  if (sessionConfig?.agent === "omp") {
+    const config = await invoke<OmpMcpConfig>("acp_omp_mcp_config", {
+      cwd: params.cwd,
+      workspace: sessionConfig.workspace,
+      profileEnv: sessionConfig.profileEnv,
+      profileArgs: sessionConfig.profileArgs,
+    });
+    params.mcpServers = ompMcpServers(config);
+  } else if (version === 1) {
+    params.mcpServers = [];
+  }
   return params;
 }
 
@@ -870,7 +878,7 @@ async function spawnSession(
     }),
   );
   const selectedCapabilities = store.getState().capabilities;
-  const sessionParams: Record<string, unknown> = withMcpServers(
+  const sessionParams: Record<string, unknown> = await withMcpServers(
     { cwd: config.cwd },
     selectedVersion,
   );
@@ -1020,7 +1028,7 @@ function restart(): Promise<void> {
 }
 
 async function createSession(cwd: string): Promise<void> {
-  const params = withMcpServers({ cwd }, protocolVersion());
+  const params = await withMcpServers({ cwd }, protocolVersion());
   const additionalDirectories = sessionSetupDirectories(
     store.getState().capabilities,
   );
@@ -1075,7 +1083,7 @@ async function loadSession(sessionId: string): Promise<void> {
   }
   store.setState((state) => resetAcpConversation(state));
   const method = canLoad ? "session/load" : "session/resume";
-  const params = withMcpServers({ sessionId, cwd }, version);
+  const params = await withMcpServers({ sessionId, cwd }, version);
   if (!canLoad) params.replayFrom = { type: "start" };
   const additionalDirectories = sessionSetupDirectories(capabilities);
   if (additionalDirectories.length > 0) {
@@ -1095,7 +1103,7 @@ async function resumeSession(sessionId: string): Promise<void> {
   const cwd = sessionCwd();
   if (!cwd || !store.getState().capabilities.sessionResume) return;
   store.setState((state) => resetAcpConversation(state));
-  const params = withMcpServers({ sessionId, cwd }, protocolVersion());
+  const params = await withMcpServers({ sessionId, cwd }, protocolVersion());
   const additionalDirectories = sessionSetupDirectories(
     store.getState().capabilities,
   );
@@ -1120,7 +1128,7 @@ async function forkSession(sessionId: string): Promise<void> {
   const cwd = sessionCwd();
   if (!cwd || !store.getState().capabilities.sessionFork) return;
   store.setState((state) => resetAcpConversation(state));
-  const params = withMcpServers({ sessionId, cwd }, protocolVersion());
+  const params = await withMcpServers({ sessionId, cwd }, protocolVersion());
   const additionalDirectories = sessionSetupDirectories(
     store.getState().capabilities,
   );

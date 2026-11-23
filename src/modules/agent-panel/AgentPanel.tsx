@@ -5,6 +5,7 @@ import { suspendPi } from "@/modules/pi-agent/store";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { AgentId, AgentPanelMode } from "@/modules/settings/store";
 import type { WorkspaceEnv } from "@/modules/workspace";
+import type { AgentTab } from "@/modules/tabs/lib/useTabs";
 
 type Props = {
   cwd: string | null;
@@ -22,6 +23,21 @@ type Props = {
   tabActive?: boolean;
   /** Harness instance (account) to use. */
   profileId?: string | null;
+  /** Open sessions, so the panel's picker can focus them. */
+  tabs: readonly AgentTab[];
+  onOpenAgent: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId?: string | null,
+  ) => void;
+  onActivateTab: (id: number) => void;
+  /** Start another harness in a fresh thread with a handoff prompt. */
+  onSpawnAgent?: (
+    agent: AgentId,
+    profileId: string | null,
+    modelId: string | null,
+    prompt: string,
+  ) => void;
   /** Replace this tab with another account. */
   onSwitchProfile?: (profileId: string) => void;
   /** Restored tab: resume its latest harness session once connected. */
@@ -32,8 +48,8 @@ type Props = {
 };
 
 /**
- * Pinned host for one agent session. Identity and account live in the panel
- * header; switching agents happens from the Agents sidebar.
+ * Pinned host for one agent session. Harness, account and model are chosen
+ * from the pickers inside the panel itself.
  */
 export function AgentPanel({
   cwd,
@@ -47,6 +63,10 @@ export function AgentPanel({
   tabId,
   tabActive,
   profileId,
+  tabs,
+  onOpenAgent,
+  onActivateTab,
+  onSpawnAgent,
   onSwitchProfile,
   resumeLatest,
   layoutMode,
@@ -74,6 +94,10 @@ export function AgentPanel({
             active={tabActive}
             profileId={profileId}
             onSwitchProfile={onSwitchProfile}
+            tabs={tabs}
+            onOpenAgent={onOpenAgent}
+            onActivateTab={onActivateTab}
+            onSpawnAgent={onSpawnAgent}
             layoutMode={layoutMode}
             onToggleLayout={onToggleLayout}
           />
@@ -91,6 +115,10 @@ export function AgentPanel({
             active={tabActive}
             profileId={profileId}
             onSwitchProfile={onSwitchProfile}
+            tabs={tabs}
+            onOpenAgent={onOpenAgent}
+            onActivateTab={onActivateTab}
+            onSpawnAgent={onSpawnAgent}
             resumeLatest={resumeLatest}
             layoutMode={layoutMode}
             onToggleLayout={onToggleLayout}

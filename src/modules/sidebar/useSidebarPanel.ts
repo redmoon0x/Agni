@@ -40,10 +40,12 @@ function readSidebarView(): SidebarViewId {
       stored === "explorer" ||
       stored === "source-control" ||
       stored === "search" ||
-      stored === "agents"
+      stored === "threads"
     ) {
       return stored;
     }
+    // The agents panel became the thread list.
+    if (stored === "agents") return "threads";
   } catch {
     // ignore
   }

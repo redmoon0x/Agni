@@ -1,1 +1,5 @@
-export type SidebarViewId = "explorer" | "source-control" | "search" | "agents";
+export type SidebarViewId =
+  | "explorer"
+  | "source-control"
+  | "search"
+  | "threads";

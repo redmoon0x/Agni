@@ -38,6 +38,8 @@ export type GitChangedFile = {
   unstaged: boolean;
   untracked: boolean;
   statusLabel: string;
+  additions: number;
+  deletions: number;
 };
 
 export type GitDiscardEntry = {
@@ -371,6 +373,62 @@ export async function gitDiff(
   });
 }
 
+export type GithubAvailability = {
+  installed: boolean;
+  authenticated: boolean;
+  account: string | null;
+};
+
+export type GithubChecks = { passed: number; failed: number; pending: number };
+
+export type GithubPullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  isDraft: boolean;
+  reviewDecision: string | null;
+  headRef: string | null;
+  baseRef: string | null;
+  checks: GithubChecks;
+};
+
+export async function githubAvailable(): Promise<GithubAvailability> {
+  return invoke("github_available");
+}
+
+export async function githubPrStatus(
+  repoRoot: string,
+  branch: string | null,
+  workspace?: WorkspaceEnv,
+): Promise<GithubPullRequest | null> {
+  return invoke("github_pr_status", {
+    repoRoot,
+    branch,
+    workspace: workspace ?? null,
+  });
+}
+
+export async function githubPrCreate(
+  input: {
+    repoRoot: string;
+    title: string;
+    body?: string;
+    base?: string | null;
+    draft?: boolean;
+  },
+  workspace?: WorkspaceEnv,
+): Promise<GithubPullRequest> {
+  return invoke("github_pr_create", {
+    repoRoot: input.repoRoot,
+    title: input.title,
+    body: input.body ?? null,
+    base: input.base ?? null,
+    draft: input.draft ?? false,
+    workspace: workspace ?? null,
+  });
+}
+
 export const native = {
   pickFolder,
   workspaceAuthorize,
@@ -392,6 +450,9 @@ export const native = {
   gitPull,
   gitPush,
   gitRemoteUrl,
+  githubAvailable,
+  githubPrStatus,
+  githubPrCreate,
   gitDiffContent,
   gitCommitFileDiff,
   gitShowCommit,
